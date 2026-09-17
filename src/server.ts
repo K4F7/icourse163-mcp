@@ -1,15 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { listTodos } from "./list-todos";
+import { listTodos, type ListTodosPorts } from "./list-todos";
 
 const LIST_TODOS_DESCRIPTION = [
   "List still-open 待办 from 中国大学MOOC (icourse163.org).",
   "status ok with an empty todos list means none are still open.",
   "认证失效 (auth_expired) and other failures are errors (isError), never a successful empty list.",
   "Do not pass accounts or cookies; this tool never returns them.",
+  "Log in with the CLI (`npm run login`); MCP never accepts passwords.",
 ].join(" ");
 
-export function createIcourse163McpServer(): McpServer {
+export function createIcourse163McpServer(ports?: ListTodosPorts): McpServer {
   const server = new McpServer({
     name: "icourse163-mcp",
     version: "0.1.0",
@@ -22,7 +23,7 @@ export function createIcourse163McpServer(): McpServer {
       description: LIST_TODOS_DESCRIPTION,
     },
     async () => {
-      const result = listTodos();
+      const result = await listTodos(ports);
       return {
         content: [{ type: "text", text: JSON.stringify(result) }],
         structuredContent: { ...result },
