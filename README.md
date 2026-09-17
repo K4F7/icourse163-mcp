@@ -19,7 +19,14 @@ npm start --silent
 
 Grok Bot / Cursor 的 AddMcpServer **没有 cwd**，必须用绝对路径启动。配置示例见 [docs/mcp.md](docs/mcp.md)。
 
-当前 `list_todos` 是骨架占位（`not_implemented`）；登录 CLI 与真实待办拉取是后续 issue。
+登录只走 CLI（MCP 工具不收密码）。Cookie 粘贴或 Playwright 账密、如何确认 / 清除会话：见 [docs/login.md](docs/login.md)。
+
+```sh
+npm run login --silent -- --cookie-file /path/to/cookie.txt
+npm run login --silent -- --check
+```
+
+当前 `list_todos` 仍是骨架占位（`not_implemented`）；真实待办拉取是后续 issue。
 
 ## 状态
 
