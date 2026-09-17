@@ -6,6 +6,7 @@ import {
   type BrowserContext,
   type Cookie,
   type FrameLocator,
+  type Locator,
   type Page,
 } from "playwright-core";
 
@@ -28,6 +29,11 @@ const LOGIN_UI_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 2_000;
 
 export const PASSWORD_MODE_SWITCH_LABEL = /密码登录|账号登录|邮箱登录/;
+
+/** True for a bare password-form submit label (登录 / 登 录); false for mode-switch / mailModule headings. */
+export function isPasswordSubmitLabel(text: string): boolean {
+  return text.replace(/\s+/g, "") === "登录";
+}
 
 const MISSING_CHROME_MESSAGE =
   "Chrome/Chromium is not installed or the chrome channel is missing. Password login needs Google Chrome or Playwright Chromium (see docs/login.md).";
@@ -184,16 +190,51 @@ async function fillHomepageLogin(page: Page, credentials: PasswordCredentials): 
   await passwordField.waitFor({ state: "visible", timeout: LOGIN_UI_TIMEOUT_MS });
   await passwordField.fill(credentials.password);
 
-  const submit = frame.getByText(/登\s*录/, { exact: false }).first();
-  if ((await submit.count()) > 0) {
-    await submit.click();
+  await clickPasswordSubmit(frame, passwordField);
+}
+
+async function clickPasswordSubmit(
+  frame: FrameLocator,
+  passwordField: Locator,
+): Promise<void> {
+  const primary = frame
+    .locator("a.u-loginbtn, button[type='submit'], input[type='submit'], #dologin")
+    .filter({ visible: true })
+    .first();
+  if ((await primary.count()) > 0) {
+    await primary.click();
     return;
   }
-  const button = frame.locator("button[type='submit'], input[type='submit']").first();
-  if ((await button.count()) > 0) {
-    await button.click();
+
+  const roleSubmit = frame
+    .getByRole("button", { name: /^\s*登\s*录\s*$/ })
+    .filter({ visible: true })
+    .first();
+  if ((await roleSubmit.count()) > 0) {
+    await roleSubmit.click();
     return;
   }
+
+  const candidates = frame.getByText(/登\s*录/, { exact: false });
+  const total = await candidates.count();
+  for (let i = 0; i < total; i++) {
+    const candidate = candidates.nth(i);
+    if (!(await candidate.isVisible())) {
+      continue;
+    }
+    let label = "";
+    try {
+      label = (await candidate.innerText()).trim();
+    } catch {
+      continue;
+    }
+    if (!isPasswordSubmitLabel(label)) {
+      continue;
+    }
+    await candidate.click();
+    return;
+  }
+
   await passwordField.press("Enter");
 }
 

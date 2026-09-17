@@ -319,6 +319,98 @@ describe("runLoginCli", () => {
     assert.match(io.getStdout(), /Chromium|Chrome/);
   });
 
+
+  test("stale ICOURSE163_COOKIE without NTESSTUDYSI falls through to password when creds exist", async () => {
+    const store = memoryStore();
+    const io = capturingIo();
+    let passwordRan = false;
+    const code = await runLoginCli({
+      argv: [],
+      env: {
+        ICOURSE163_COOKIE: "FOO=bar",
+        ICOURSE163_USERNAME: "alice",
+        ICOURSE163_PASSWORD: SECRET,
+      },
+      credentials: store,
+      probe: okProbe,
+      passwordLogin: {
+        async loginWithPassword(credentials) {
+          passwordRan = true;
+          assert.equal(credentials.username, "alice");
+          assert.equal(credentials.password, SECRET);
+          await store.setCookie(COOKIE);
+        },
+      },
+      io,
+    });
+    assert.equal(code, 0);
+    assert.equal(passwordRan, true);
+    assert.match(io.getStdout(), /LOGIN_OK has_cookie=true/);
+    assert.equal(store.cookie, COOKIE);
+  });
+
+  test("ICOURSE163_COOKIE that fails probe falls through to password when creds exist", async () => {
+    const store = memoryStore();
+    const io = capturingIo();
+    let passwordRan = false;
+    let probeCalls = 0;
+    const code = await runLoginCli({
+      argv: [],
+      env: {
+        ICOURSE163_COOKIE: COOKIE,
+        ICOURSE163_USERNAME: "alice",
+        ICOURSE163_PASSWORD: SECRET,
+      },
+      credentials: store,
+      probe: async (cookie) => {
+        probeCalls += 1;
+        if (probeCalls === 1) {
+          return {
+            ok: false,
+            status: "auth_expired",
+            message: "auth_expired: session rejected",
+          };
+        }
+        return okProbe(cookie);
+      },
+      passwordLogin: {
+        async loginWithPassword() {
+          passwordRan = true;
+          await store.setCookie(COOKIE);
+        },
+      },
+      io,
+    });
+    assert.equal(code, 0);
+    assert.equal(passwordRan, true);
+    assert.match(io.getStdout(), /LOGIN_OK has_cookie=true/);
+  });
+
+  test("cookie-file without NTESSTUDYSI does not fall through even with password env", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "icourse163-login-"));
+    const cookieFile = join(dir, "cookie.txt");
+    await writeFile(cookieFile, "FOO=bar\n", "utf8");
+    const store = memoryStore();
+    const io = capturingIo();
+    let passwordRan = false;
+    const code = await runLoginCli({
+      argv: ["--cookie-file", cookieFile],
+      env: { ICOURSE163_USERNAME: "alice", ICOURSE163_PASSWORD: SECRET },
+      credentials: store,
+      probe: okProbe,
+      passwordLogin: {
+        async loginWithPassword() {
+          passwordRan = true;
+        },
+      },
+      io,
+    });
+    assert.equal(code, 1);
+    assert.equal(passwordRan, false);
+    assert.match(io.getStderr(), /NTESSTUDYSI/);
+    assert.equal(store.cookie, null);
+  });
+
   test("exits non-zero when credentials are missing and there is no prompt", async () => {
     const io = capturingIo();
     const code = await runLoginCli({
