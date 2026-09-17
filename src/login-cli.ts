@@ -27,7 +27,11 @@ passwords or cookies.
 
 Cookie paste (reliable last resort):
   --cookie-file <path>   Cookie header or Netscape cookies.txt (must include NTESSTUDYSI)
-  env ICOURSE163_COOKIE  Same as --cookie-file, but from the environment
+  env ICOURSE163_COOKIE  Same as --cookie-file, but from the environment.
+                         Takes precedence over password env when valid. If the
+                         env cookie lacks NTESSTUDYSI or fails the session probe
+                         and username/password are also set, falls through to
+                         Playwright password login.
 
 Password login (Playwright; needs Chrome/Chromium):
   env ICOURSE163_USERNAME / ICOURSE163_PASSWORD
@@ -168,7 +172,20 @@ export async function runLoginCli(input: {
     return 1;
   }
   if (cookieSource.cookie != null) {
-    return finishWithCookie(cookieSource.cookie, input);
+    const cookieOutcome = await tryFinishWithCookie(cookieSource.cookie, input);
+    if (cookieOutcome.ok) {
+      return 0;
+    }
+    const preview = credentialsFromFlagsAndEnv(flags, input.env);
+    const canFallThrough =
+      cookieSource.source === "env" &&
+      preview.username.length > 0 &&
+      preview.password.length > 0;
+    if (!canFallThrough) {
+      input.io.stderr.write(`${cookieOutcome.message}\n`);
+      return 1;
+    }
+    // Stale/incomplete ICOURSE163_COOKIE: fall through to Playwright password login.
   }
 
   let resolved = credentialsFromFlagsAndEnv(flags, input.env);
@@ -213,29 +230,29 @@ export async function runLoginCli(input: {
   }
 }
 
-async function finishWithCookie(
+async function tryFinishWithCookie(
   rawCookie: string,
   input: {
     credentials: WritableCredentialStore;
     probe: SessionProbe;
     io: LoginCliIo;
   },
-): Promise<number> {
+): Promise<{ ok: true } | { ok: false; message: string }> {
   const cookie = normalizeToCookieHeader(rawCookie);
   if (!cookieHasNtesstudysi(cookie)) {
-    input.io.stderr.write(
-      "Cookie is missing NTESSTUDYSI. Paste the Cookie header from an icourse163.org request after login.\n",
-    );
-    return 1;
+    return {
+      ok: false,
+      message:
+        "Cookie is missing NTESSTUDYSI. Paste the Cookie header from an icourse163.org request after login.",
+    };
   }
   const probed = await input.probe(cookie);
   if (!probed.ok) {
-    input.io.stderr.write(`${probed.message}\n`);
-    return 1;
+    return { ok: false, message: probed.message };
   }
   await input.credentials.setCookie(probed.cookie);
   input.io.stdout.write(`${LOGIN_OK}\n`);
-  return 0;
+  return { ok: true };
 }
 
 async function finishWithStoredCookie(
@@ -266,29 +283,37 @@ async function readCookieSource(
     io: LoginCliIo;
     readFile?: (path: string) => Promise<string>;
   },
-): Promise<{ cookie: string | null; error: string | null }> {
+): Promise<{
+  cookie: string | null;
+  error: string | null;
+  source: "file" | "env" | null;
+}> {
   if (flags.cookieFile != null && flags.cookieFile.trim() !== "") {
     const path = expandUserPath(flags.cookieFile);
     try {
       const read = input.readFile ?? ((filePath: string) => readFile(filePath, "utf8"));
       const raw = await read(path);
       if (raw.trim().length === 0) {
-        return { cookie: null, error: "Cookie file is empty." };
+        return { cookie: null, error: "Cookie file is empty.", source: null };
       }
-      return { cookie: raw, error: null };
+      return { cookie: raw, error: null, source: "file" };
     } catch (error) {
       if (isNotFound(error)) {
-        return { cookie: null, error: "Cookie file not found." };
+        return { cookie: null, error: "Cookie file not found.", source: null };
       }
       const detail = error instanceof Error ? error.message : String(error);
-      return { cookie: null, error: `Failed to read cookie file: ${detail}` };
+      return {
+        cookie: null,
+        error: `Failed to read cookie file: ${detail}`,
+        source: null,
+      };
     }
   }
   const fromEnv = input.env.ICOURSE163_COOKIE;
   if (fromEnv != null && fromEnv.trim() !== "") {
-    return { cookie: fromEnv, error: null };
+    return { cookie: fromEnv, error: null, source: "env" };
   }
-  return { cookie: null, error: null };
+  return { cookie: null, error: null, source: null };
 }
 
 function isNotFound(error: unknown): boolean {

@@ -5,6 +5,7 @@ import {
   PASSWORD_MODE_SWITCH_LABEL,
   cannotOpenLoginUiMessage,
   describeLoginFailure,
+  isPasswordSubmitLabel,
   passwordLoginHeadless,
   redactLoginSecrets,
 } from "../src/open-login";
@@ -70,5 +71,22 @@ describe("PASSWORD_MODE_SWITCH_LABEL", () => {
     assert.doesNotMatch("短信登录", PASSWORD_MODE_SWITCH_LABEL);
     assert.doesNotMatch("扫码登录", PASSWORD_MODE_SWITCH_LABEL);
     assert.equal(PASSWORD_MODE_SWITCH_LABEL.test("登录"), false);
+  });
+});
+
+describe("isPasswordSubmitLabel", () => {
+  test("accepts bare 登录 / 登 录 submit labels", () => {
+    assert.equal(isPasswordSubmitLabel("登录"), true);
+    assert.equal(isPasswordSubmitLabel("登 录"), true);
+    assert.equal(isPasswordSubmitLabel("  登\t录  "), true);
+  });
+
+  test("rejects mailModule and mode-switch headings", () => {
+    assert.equal(isPasswordSubmitLabel("网易邮箱账号登录"), false);
+    assert.equal(isPasswordSubmitLabel("密码登录"), false);
+    assert.equal(isPasswordSubmitLabel("账号登录"), false);
+    assert.equal(isPasswordSubmitLabel("邮箱登录"), false);
+    assert.equal(isPasswordSubmitLabel("短信登录"), false);
+    assert.equal(isPasswordSubmitLabel("扫码登录"), false);
   });
 });

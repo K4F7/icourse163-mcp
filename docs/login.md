@@ -29,6 +29,8 @@ ICOURSE163_COOKIE='…paste cookie header…' npm run login --silent
 
 Netscape `cookies.txt`（仅 `icourse163.org` 域）也可以。缺 `NTESSTUDYSI` 会失败。
 
+**优先级：** 有效的 `ICOURSE163_COOKIE`（或 `--cookie-file`）优先于账密。若环境变量 cookie 缺 `NTESSTUDYSI` 或会话探测失败，且同时提供了用户名/密码，则回退到 Playwright 账密登录（显式 `--cookie-file` 失败不会回退）。
+
 ## Playwright 账密
 
 对环境变量 `ICOURSE163_USERNAME` / `ICOURSE163_PASSWORD`（可用 `-u` / `-p` 覆盖；用 `--silent` 以免 npm 横幅把 `-p` 打出来）：
@@ -37,7 +39,7 @@ Netscape `cookies.txt`（仅 `icourse163.org` 域）也可以。缺 `NTESSTUDYSI
 ICOURSE163_USERNAME='…' ICOURSE163_PASSWORD='…' npm run login --silent
 ```
 
-流程：打开首页（SPA，等待可见的「登录」入口，而不是立刻扫 DOM）→ `iframe[src*='reg.icourse163.org'][src*='index_dl2']`。URS 默认短信/扫码，密码框可能已存在但隐藏；若未见密码框则点「密码登录 / 账号登录 / 邮箱登录」，再填账密。需要本机 **Chrome / Chromium**（`playwright-core` 走系统 Chrome `channel: "chrome"`；也可设 `ICOURSE163_CHROME` 指向浏览器可执行文件）。无图形界面时走 headless。
+流程：打开首页（SPA，等待可见的「登录」入口，而不是立刻扫 DOM）→ `iframe[src*='reg.icourse163.org'][src*='index_dl2']`。URS 默认短信/扫码，密码框可能已存在但隐藏；若未见密码框则点「密码登录 / 账号登录 / 邮箱登录」，再填账密。提交点可见的 `a.u-loginbtn` / `button|input[type=submit]` / `#dologin`，或可见的纯「登录」文案（不会点隐藏的「网易邮箱账号登录」）。需要本机 **Chrome / Chromium**（`playwright-core` 走系统 Chrome `channel: "chrome"`；也可设 `ICOURSE163_CHROME` 指向浏览器可执行文件）。无图形界面时走 headless。
 
 不做学校 SSO（docs.icourse163.org）。不做代答 / 代交。
 
