@@ -1,0 +1,27 @@
+node_modules/
+dist/
+*.log
+*.tsbuildinfo
+
+# worktree / local scratch
+.worktrees/
+.scratch/
+
+# secrets and env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# cookies / local session dumps — never commit
+cookies.txt
+cookies.json
+*.cookies
+*.cookie
+session.json
+.icourse163/
+.icourse163-session*
+NTESSTUDYSI*
