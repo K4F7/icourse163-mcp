@@ -1,7 +1,13 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { chromium, type BrowserContext, type Cookie, type Page } from "playwright-core";
+import {
+  chromium,
+  type BrowserContext,
+  type Cookie,
+  type FrameLocator,
+  type Page,
+} from "playwright-core";
 
 import { cookieHasNtesstudysi } from "./cookie";
 import type { WritableCredentialStore } from "./credentials";
@@ -18,7 +24,10 @@ export type PasswordLoginRunner = {
 const HOMEPAGE = "https://www.icourse163.org/";
 const LOGIN_IFRAME = "iframe[src*='reg.icourse163.org'][src*='index_dl2']";
 const PASSWORD_LOGIN_TIMEOUT_MS = 60_000;
+const LOGIN_UI_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 2_000;
+
+export const PASSWORD_MODE_SWITCH_LABEL = /密码登录|账号登录|邮箱登录/;
 
 const MISSING_CHROME_MESSAGE =
   "Chrome/Chromium is not installed or the chrome channel is missing. Password login needs Google Chrome or Playwright Chromium (see docs/login.md).";
@@ -97,7 +106,10 @@ export function createPlaywrightPasswordLogin(
       try {
         context = await launchBrowserContext(options.env, headless);
         const page = context.pages()[0] ?? (await context.newPage());
-        await page.goto(HOMEPAGE, { waitUntil: "domcontentloaded" });
+        await page.goto(HOMEPAGE, {
+          waitUntil: "domcontentloaded",
+          timeout: PASSWORD_LOGIN_TIMEOUT_MS,
+        });
         await fillHomepageLogin(page, passwordCreds);
         const cookie = await waitForSessionCookie(context, PASSWORD_LOGIN_TIMEOUT_MS);
         await credentials.setCookie(cookie);
@@ -155,16 +167,21 @@ async function fillHomepageLogin(page: Page, credentials: PasswordCredentials): 
   const iframe = page.locator(LOGIN_IFRAME);
   if ((await iframe.count()) === 0) {
     await clickLoginTrigger(page);
-    await page.waitForSelector(LOGIN_IFRAME, { timeout: 15_000 });
+    await page.waitForSelector(LOGIN_IFRAME, { timeout: LOGIN_UI_TIMEOUT_MS });
   }
 
   const frame = page.frameLocator(LOGIN_IFRAME).first();
-  const userField = frame.locator("input[type='text'], input[type='tel']").first();
-  await userField.waitFor({ state: "visible", timeout: 15_000 });
+  await ensurePasswordMode(frame);
+
+  const userField = frame
+    .locator("input[type='text'], input[type='tel']")
+    .filter({ visible: true })
+    .first();
+  await userField.waitFor({ state: "visible", timeout: LOGIN_UI_TIMEOUT_MS });
   await userField.fill(credentials.username);
 
-  const passwordField = frame.locator("input[type='password']").first();
-  await passwordField.waitFor({ state: "visible", timeout: 15_000 });
+  const passwordField = frame.locator("input[type='password']").filter({ visible: true }).first();
+  await passwordField.waitFor({ state: "visible", timeout: LOGIN_UI_TIMEOUT_MS });
   await passwordField.fill(credentials.password);
 
   const submit = frame.getByText(/登\s*录/, { exact: false }).first();
@@ -188,12 +205,29 @@ async function clickLoginTrigger(page: Page): Promise<void> {
   ];
   for (const locator of candidates) {
     const first = locator.first();
-    if ((await first.count()) > 0) {
+    try {
+      await first.waitFor({ state: "visible", timeout: LOGIN_UI_TIMEOUT_MS });
       await first.click();
       return;
+    } catch {
+      // Homepage 登录 may be a link, button, or text; SPA hydrates one of them.
     }
   }
   throw new Error("password login: login control not found on homepage");
+}
+
+async function ensurePasswordMode(frame: FrameLocator): Promise<void> {
+  const visiblePassword = frame.locator("input[type='password']").filter({ visible: true }).first();
+  if (await visiblePassword.isVisible()) {
+    return;
+  }
+  const modeSwitch = frame.getByText(PASSWORD_MODE_SWITCH_LABEL).filter({ visible: true }).first();
+  try {
+    await modeSwitch.waitFor({ state: "visible", timeout: LOGIN_UI_TIMEOUT_MS });
+    await modeSwitch.click();
+  } catch {
+    // Already on password mode, or the tab is absent; fill still waits for the field.
+  }
 }
 
 async function waitForSessionCookie(

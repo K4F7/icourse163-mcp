@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  PASSWORD_MODE_SWITCH_LABEL,
   cannotOpenLoginUiMessage,
   describeLoginFailure,
   passwordLoginHeadless,
@@ -55,5 +56,19 @@ describe("redactLoginSecrets", () => {
     assert.doesNotMatch(redacted, /alice/);
     assert.doesNotMatch(redacted, /s3cret-value/);
     assert.match(redacted, /已隐藏/);
+  });
+});
+
+describe("PASSWORD_MODE_SWITCH_LABEL", () => {
+  test("matches URS password-mode tabs", () => {
+    assert.match("密码登录", PASSWORD_MODE_SWITCH_LABEL);
+    assert.match("账号登录", PASSWORD_MODE_SWITCH_LABEL);
+    assert.match("邮箱登录", PASSWORD_MODE_SWITCH_LABEL);
+  });
+
+  test("does not match SMS/QR tabs or a bare 登录 submit", () => {
+    assert.doesNotMatch("短信登录", PASSWORD_MODE_SWITCH_LABEL);
+    assert.doesNotMatch("扫码登录", PASSWORD_MODE_SWITCH_LABEL);
+    assert.equal(PASSWORD_MODE_SWITCH_LABEL.test("登录"), false);
   });
 });
