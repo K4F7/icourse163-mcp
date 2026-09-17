@@ -59,4 +59,4 @@ npm run login -- --help
 
 ## 和 MCP 的关系
 
-`list_todos` 仍是骨架占位（`not_implemented`），真实拉取见后续 issue。stdio 进程会构造本机凭据库和 HTTP 客户端，但工具参数里没有账号、密码或 cookie。
+先 CLI 登录，再挂 MCP。`list_todos` 用本机会话拉仍开放的待办；工具参数里没有账号、密码或 cookie，返回里也不含它们。

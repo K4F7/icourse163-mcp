@@ -11,6 +11,21 @@ export const COURSE_LIST_RPC_PATH =
 
 export const COURSE_LIST_RPC_URL = `https://www.icourse163.org${COURSE_LIST_RPC_PATH}`;
 
+export const TERM_RPC_PATH = "/web/j/courseBean.getLastLearnedMocTermDto.rpc";
+
+export const TERM_RPC_URL = `https://www.icourse163.org${TERM_RPC_PATH}`;
+
+/** Structurally the same as Icourse163Http; kept here to avoid a runtime cycle. */
+export type SessionHttp = {
+  request(input: {
+    url: string;
+    cookie: string;
+    method?: "GET" | "POST";
+    form?: Record<string, string>;
+    headers?: Record<string, string>;
+  }): Promise<{ statusCode: number; body: string; cookie: string }>;
+};
+
 export type AuthProbeOk = {
   ok: true;
   cookie: string;
@@ -41,16 +56,17 @@ export function expiredSessionFailure(message = EXPIRED_SESSION_MESSAGE): AuthPr
 export async function probeSession(input: {
   cookie: string | null;
   fetchImpl?: FetchLike;
+  http?: SessionHttp;
 }): Promise<AuthProbeResult> {
   const cookie = input.cookie?.trim() ?? "";
   if (cookie.length === 0 || !cookieHasNtesstudysi(cookie)) {
     return missingSessionFailure();
   }
 
-  const fetchImpl = input.fetchImpl ?? globalThis.fetch;
-  let warmed: Awaited<ReturnType<typeof fetchTrustedIcourse163>>;
+  const request = createSessionRequest(input);
+  let warmed: { statusCode: number; body: string; cookie: string };
   try {
-    warmed = await fetchTrustedIcourse163(fetchImpl, {
+    warmed = await request({
       url: WARMUP_URL,
       cookie,
       method: "GET",
@@ -69,9 +85,9 @@ export async function probeSession(input: {
     return expiredSessionFailure();
   }
 
-  let rpc: Awaited<ReturnType<typeof fetchTrustedIcourse163>>;
+  let rpc: { statusCode: number; body: string; cookie: string };
   try {
-    rpc = await fetchTrustedIcourse163(fetchImpl, {
+    rpc = await request({
       url: `${COURSE_LIST_RPC_URL}?csrfKey=${encodeURIComponent(csrfKey)}`,
       cookie: warmed.cookie,
       method: "POST",
@@ -96,6 +112,18 @@ export async function probeSession(input: {
   }
 
   return expiredSessionFailure();
+}
+
+function createSessionRequest(input: {
+  fetchImpl?: FetchLike;
+  http?: SessionHttp;
+}): SessionHttp["request"] {
+  const http = input.http;
+  if (http != null) {
+    return (request) => http.request(request);
+  }
+  const fetchImpl = input.fetchImpl ?? globalThis.fetch;
+  return async (request) => fetchTrustedIcourse163(fetchImpl, request);
 }
 
 export function rpcCodeIsZero(body: string): boolean {

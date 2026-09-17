@@ -26,7 +26,7 @@ npm run login --silent -- --cookie-file /path/to/cookie.txt
 npm run login --silent -- --check
 ```
 
-当前 `list_todos` 仍是骨架占位（`not_implemented`）；真实待办拉取是后续 issue。
+`list_todos` 列出仍开放的作业 / 测验 / 考试（未完成、未交、可作答）。`status: ok` 且 `todos` 为空表示确实没有开放待办；认证失效是 `auth_expired`（`isError`），不会伪装成空成功。工具不接收、不返回 cookie 或密码。
 
 ## 状态
 
