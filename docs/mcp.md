@@ -2,7 +2,7 @@
 
 本仓库根目录就是给 Grok Bot / Cursor 用的本机 stdio MCP。体验对齐 [K4F7/chaoxing-mcp](https://github.com/K4F7/chaoxing-mcp) / [K4F7/pu-mcp](https://github.com/K4F7/pu-mcp)：一个进程、stdio、凭据不进工具参数。
 
-工具只有 `list_todos`。当前是骨架占位（`status: "not_implemented"`、`isError: true`）；真实待办拉取是后续 issue。登录只走 CLI，见 [docs/login.md](login.md)。MCP 从不接收或返回 cookie / 密码。
+工具只有 `list_todos`。登录只走 CLI，见 [docs/login.md](login.md)。MCP 从不接收或返回 cookie / 密码。
 
 ## 安装
 
@@ -109,8 +109,9 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 
 ## `list_todos`
 
-- 列出中国大学MOOC（icourse163.org）仍开放的待办（未交作业 / 测验等）。
+- 列出中国大学MOOC（icourse163.org）仍开放的待办（未完成 / 未交 / 可作答的作业、测验、考试）。
+- 每条含 `id`、`title`、`course_title`、`due_at`（ISO `+08:00` 或 `null`）、`kind`（作业 / 测验 / 考试）。
 - `status: ok` 且 `todos` 为空表示确实没有开放待办，不是失败。
 - `auth_expired` 以及其他失败都是 `isError`，不会伪装成「没有作业」。
-- 骨架阶段返回 `not_implemented`（同样是 `isError` + 空 `todos`），真实网络实现见后续 issue。stdio 会构造本机会话存储与 HTTP 客户端，但 `list_todos` 在实现拉取之前仍是占位。
+- stdio 使用本机会话存储与 HTTP 客户端：先 `probeSession`，再拉课程面板（MOOC+SPOC 分页）和每门课的 `getLastLearnedMocTermDto`（Referer 必须是 `learn/{school}-{courseId}?tid={termId}`）。
 - 不要传账号或 cookie；工具也不返回它们。登录、确认、清除会话见 [docs/login.md](login.md)。

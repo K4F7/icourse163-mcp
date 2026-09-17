@@ -3,7 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { listTodos, type ListTodosPorts } from "./list-todos";
 
 const LIST_TODOS_DESCRIPTION = [
-  "List still-open 待办 from 中国大学MOOC (icourse163.org).",
+  "List still-open 待办 from 中国大学MOOC (icourse163.org): 未完成 / 未交 / 可作答 homework, quizzes, and exams.",
+  "Each item has id, title, course_title, due_at (ISO+08:00 or null), and kind (作业/测验/考试).",
   "status ok with an empty todos list means none are still open.",
   "认证失效 (auth_expired) and other failures are errors (isError), never a successful empty list.",
   "Do not pass accounts or cookies; this tool never returns them.",
