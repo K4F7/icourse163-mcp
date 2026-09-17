@@ -1,0 +1,6 @@
+# Repo-root grok (cwd = this directory) can use relative npm start.
+# Grok Bot AddMcpServer has no cwd — use the absolute-path forms in docs/mcp.md.
+[mcp_servers.icourse163]
+command = "npm"
+args = ["start", "--silent"]
+startup_timeout_sec = 60

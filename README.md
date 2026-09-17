@@ -8,6 +8,19 @@
 - 登录只走 CLI / 环境变量；MCP 工具不收密码
 - 首个工具：`list_todos`（未交作业 / 测验等仍开放待办）
 
+## 安装 / 启动
+
+```sh
+npm ci
+npm start --silent
+```
+
+`--silent` 避免 npm 横幅写进 stdout（会破坏 MCP JSON-RPC）。stdin 保持打开时进程不应退出。
+
+Grok Bot / Cursor 的 AddMcpServer **没有 cwd**，必须用绝对路径启动。配置示例见 [docs/mcp.md](docs/mcp.md)。
+
+当前 `list_todos` 是骨架占位（`not_implemented`）；登录 CLI 与真实待办拉取是后续 issue。
+
 ## 状态
 
 脚手架与 MVP 由专仓 bot 按 `ready-for-agent` issue 推进（本机 grok build）。
