@@ -134,3 +134,16 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 - 章级 `quizs` 会作为 `quiz` 课节出现。若 RPC 带学习信号（如 `hasLearned` / `evaluateStatus`），填入 `learn_status`，否则为 `null`。
 - 使用官方 `getLastLearnedMocTermDto` RPC（非 Playwright）。不代答、不代交；测验读写见后续 issue。
 - `auth_expired` 为 `isError`。不要传账号或 cookie。
+
+## `study_unit`
+
+- Args: `course_id`, `term_id`, `unit_id` (from `list_courses` / `list_term_units`); optional `school_short_name`; optional `playback_rate` (0.5–2, default 1).
+- Advances **video** unit progress via official RPCs: resolve unit in `getLastLearnedMocTermDto`, optional `getLessonUnitLearnVo` for duration/videoId, then `saveMocContentLearn`. **No Playwright** in this implementation.
+- Success: `status: "ok"`, `completed: true`, `learned_sec` / `duration_sec` / `percent` when known, `playback_rate`, `transport: "rpc"`.
+- Distinct failures (`isError`):
+  - `non_media_unit` — unit is not video/audio (doc/quiz/other)
+  - `auth_expired` — missing/expired session
+  - `page_structure_change` — unit missing from catalog, or learnVo/save response unparseable
+- **Video popup quizzes**: not auto-answered or silently submitted; use later quiz tools (read → AI → save).
+- **Limits / detection risk**: RPC progress reports can differ from real playback timing/traffic; platforms may flag this. Use only on accounts you own. Do not pass cookies/passwords. `playback_rate` is recorded on the result; the RPC path does not actually stream media.
+- Never pass accounts or cookies.

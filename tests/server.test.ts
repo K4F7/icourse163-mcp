@@ -27,7 +27,7 @@ describe("icourse163 MCP server", () => {
 
       const listed = await client.listTools();
       const names = listed.tools.map((tool) => tool.name).sort();
-      assert.deepEqual(names, ["list_courses", "list_term_units", "list_todos"]);
+      assert.deepEqual(names, ["list_courses", "list_term_units", "list_todos", "study_unit"]);
 
       const result = await client.callTool({ name: "list_todos", arguments: {} });
       assert.equal("isError" in result && result.isError, true);
@@ -117,6 +117,21 @@ describe("icourse163 MCP server", () => {
       assert.equal(unitsPayload.status, "auth_expired");
       assert.deepEqual(unitsPayload.lessons, []);
       assert.equal(JSON.stringify(unitsPayload).includes("test-session"), false);
+
+      const study = await client.callTool({
+        name: "study_unit",
+        arguments: {
+          course_id: "1001",
+          term_id: "2001",
+          unit_id: "401",
+          school_short_name: "SJTU",
+        },
+      });
+      assert.equal("isError" in study && study.isError, true);
+      const studyPayload = structuredPayload(study);
+      assert.equal(studyPayload.status, "auth_expired");
+      assert.equal(studyPayload.completed, false);
+      assert.equal(JSON.stringify(studyPayload).includes("test-session"), false);
     } finally {
       await client.close();
       await server.close();

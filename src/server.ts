@@ -5,6 +5,7 @@ import { listCourses } from "./list-courses";
 import { listTermUnits } from "./list-term-units";
 import { listTodos } from "./list-todos";
 import type { Icourse163Ports } from "./ports";
+import { studyUnit } from "./study-unit";
 
 const LIST_TODOS_DESCRIPTION = [
   "List still-open 待办 from 中国大学MOOC (icourse163.org): 未完成 / 未交 / 可作答 homework, quizzes, and exams.",
@@ -30,6 +31,16 @@ const LIST_TERM_UNITS_DESCRIPTION = [
   "Each unit has id, name, type (video|doc|quiz|other), and learn_status when available.",
   "Chapter quizzes appear as quiz lessons. Auth failures are auth_expired (isError).",
   "Do not pass accounts or cookies; this tool never returns them.",
+  "Log in with the CLI (`npm run login`); MCP never accepts passwords.",
+].join(" ");
+
+
+const STUDY_UNIT_DESCRIPTION = [
+  "Advance learning progress for one video/audio 课件 unit on 中国大学MOOC (align OCS watchMedia).",
+  "Args: course_id, term_id, unit_id from list_courses / list_term_units; optional school_short_name; optional playback_rate (0.5–2, default 1).",
+  "Uses official saveMocContentLearn RPC (no Playwright). Returns completed, learned_sec, duration_sec, percent, transport=rpc.",
+  "Distinct failures: non_media_unit, auth_expired, page_structure_change. Video popup quizzes are NOT auto-submitted (see later quiz tools).",
+  "Detection risk: RPC progress can differ from real playback; use only on accounts you own. Do not pass cookies/passwords.",
   "Log in with the CLI (`npm run login`); MCP never accepts passwords.",
 ].join(" ");
 
@@ -91,6 +102,45 @@ export function createIcourse163McpServer(ports?: Icourse163Ports): McpServer {
           course_id: args.course_id,
           term_id: args.term_id,
           school_short_name: args.school_short_name,
+        },
+        ports,
+      );
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        structuredContent: { ...result },
+        isError: result.isError,
+      };
+    },
+  );
+
+
+  server.registerTool(
+    "study_unit",
+    {
+      title: "Study video/audio unit",
+      description: STUDY_UNIT_DESCRIPTION,
+      inputSchema: {
+        course_id: z.string().describe("Course id from list_courses"),
+        term_id: z.string().describe("Term id from list_courses"),
+        unit_id: z.string().describe("Video/audio unit id from list_term_units"),
+        school_short_name: z
+          .string()
+          .optional()
+          .describe("Optional school shortName for learn Referer (e.g. SJTU)"),
+        playback_rate: z
+          .number()
+          .optional()
+          .describe("Playback rate 0.5–2 (default 1); recorded with RPC progress"),
+      },
+    },
+    async (args) => {
+      const result = await studyUnit(
+        {
+          course_id: args.course_id,
+          term_id: args.term_id,
+          unit_id: args.unit_id,
+          school_short_name: args.school_short_name,
+          playback_rate: args.playback_rate,
         },
         ports,
       );

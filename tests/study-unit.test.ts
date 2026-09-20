@@ -1,0 +1,313 @@
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+
+import { TERM_RPC_URL, WARMUP_URL } from "../src/auth";
+import { learnReferer } from "../src/course-rpc";
+import {
+  LEARN_VO_RPC_URL,
+  SAVE_LEARN_RPC_URL,
+  buildVideoLearnDto,
+  findUnitInMocTerm,
+  studyUnit,
+} from "../src/study-unit";
+import type {
+  Icourse163Http,
+  Icourse163HttpRequest,
+  Icourse163Ports,
+} from "../src/ports";
+import { CATALOG_MOC_TERM_DTO, mocTermBody } from "./fixtures";
+
+const SESSION = "NTESSTUDYSI=test-session";
+
+function portsWith(
+  getCookie: () => Promise<string | null>,
+  http: Icourse163Http,
+): Icourse163Ports {
+  return { credentials: { getCookie }, http };
+}
+
+function recordingHttp(
+  handler: (input: Icourse163HttpRequest) => {
+    statusCode: number;
+    body: string;
+    cookie?: string;
+  },
+): { calls: Icourse163HttpRequest[]; http: Icourse163Http } {
+  const calls: Icourse163HttpRequest[] = [];
+  return {
+    calls,
+    http: {
+      async request(input) {
+        calls.push(input);
+        const result = handler(input);
+        return {
+          statusCode: result.statusCode,
+          url: input.url,
+          body: result.body,
+          cookie: result.cookie ?? input.cookie,
+        };
+      },
+    },
+  };
+}
+
+function warmupOk(input: Icourse163HttpRequest): {
+  statusCode: number;
+  body: string;
+  cookie: string;
+} | null {
+  if ((input.method ?? "GET") === "GET" && input.url === WARMUP_URL) {
+    return {
+      statusCode: 200,
+      body: "<html>ok</html>",
+      cookie: `${input.cookie}; STUDY_INFO=ok`,
+    };
+  }
+  return null;
+}
+
+const baseChapter = CATALOG_MOC_TERM_DTO.chapters[0];
+const baseLesson = baseChapter.lessons[0];
+
+const CATALOG_WITH_VIDEO_META = {
+  chapters: [
+    {
+      ...baseChapter,
+      lessons: [
+        {
+          ...baseLesson,
+          units: [
+            {
+              id: 401,
+              name: "导论视频",
+              contentType: 1,
+              contentId: 9001,
+              duration: 120,
+              hasLearned: false,
+            },
+            ...baseLesson.units.slice(1),
+          ],
+        },
+      ],
+    },
+  ],
+  exams: [],
+};
+
+describe("findUnitInMocTerm", () => {
+  test("finds video unit with content meta", () => {
+    const found = findUnitInMocTerm(CATALOG_WITH_VIDEO_META, "401");
+    assert.ok(found != null);
+    assert.equal(found.unit_id, "401");
+    assert.equal(found.name, "导论视频");
+    assert.equal(found.content_type, 1);
+    assert.equal(found.unit_type, "video");
+    assert.equal(found.content_id, "9001");
+    assert.equal(found.duration_sec, 120);
+    assert.equal(found.lesson_id, "21");
+  });
+
+  test("returns null when unit missing", () => {
+    assert.equal(findUnitInMocTerm(CATALOG_MOC_TERM_DTO, "999"), null);
+  });
+});
+
+describe("buildVideoLearnDto", () => {
+  test("builds finished video dto for saveMocContentLearn", () => {
+    const dto = buildVideoLearnDto({
+      unit_id: "401",
+      content_id: "9001",
+      duration_sec: 120,
+    });
+    assert.equal(dto.unitId, 401);
+    assert.equal(dto.contentType, 1);
+    assert.equal(dto.finished, true);
+    assert.equal(dto.videoDto.videoId, 9001);
+    assert.equal(dto.videoDto.duration, 120);
+    assert.equal(dto.videoDto.currentTime, 120);
+    assert.equal(dto.videoDto.learnedTime, 120);
+  });
+});
+
+describe("studyUnit", () => {
+  test("null credentials is auth_expired", async () => {
+    const { calls, http } = recordingHttp(() => {
+      throw new Error("http should not run");
+    });
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "401",
+        school_short_name: "SJTU",
+      },
+      portsWith(async () => null, http),
+    );
+    assert.equal(result.status, "auth_expired");
+    assert.equal(result.isError, true);
+    assert.equal(result.completed, false);
+    assert.deepEqual(calls, []);
+  });
+
+  test("missing args is error", async () => {
+    const result = await studyUnit({
+      course_id: " ",
+      term_id: "2001",
+      unit_id: "401",
+    });
+    assert.equal(result.status, "error");
+    assert.equal(result.isError, true);
+  });
+
+  test("non-video unit is non_media_unit", async () => {
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "402",
+        school_short_name: "SJTU",
+      },
+      portsWith(async () => SESSION, http),
+    );
+    assert.equal(result.status, "non_media_unit");
+    assert.equal(result.isError, true);
+    assert.equal(result.unit_type, "doc");
+    assert.equal(result.completed, false);
+  });
+
+  test("unknown unit is page_structure_change", async () => {
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "40404",
+        school_short_name: "SJTU",
+      },
+      portsWith(async () => SESSION, http),
+    );
+    assert.equal(result.status, "page_structure_change");
+    assert.equal(result.isError, true);
+  });
+
+  test("posts saveMocContentLearn dto and returns progress", async () => {
+    const { calls, http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: 0,
+            result: { duration: 120, videoId: 9001, learnedTime: 0 },
+          }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        return { statusCode: 200, body: JSON.stringify({ code: 0, result: {} }) };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "401",
+        school_short_name: "SJTU",
+        playback_rate: 2,
+      },
+      portsWith(async () => SESSION, http),
+    );
+
+    assert.equal(result.status, "ok");
+    assert.equal(result.isError, false);
+    assert.equal(result.completed, true);
+    assert.equal(result.unit_id, "401");
+    assert.equal(result.unit_type, "video");
+    assert.equal(result.playback_rate, 2);
+    assert.equal(result.learned_sec, 120);
+    assert.equal(result.duration_sec, 120);
+    assert.equal(result.percent, 100);
+    assert.equal(result.transport, "rpc");
+    assert.equal(JSON.stringify(result).includes("test-session"), false);
+
+    const saveCall = calls.find((call) => call.url.startsWith(SAVE_LEARN_RPC_URL));
+    assert.ok(saveCall != null);
+    assert.equal(saveCall.method, "POST");
+    assert.ok(saveCall.form?.dto != null);
+    const dto = JSON.parse(saveCall.form.dto) as {
+      unitId: number;
+      finished: boolean;
+      videoDto: { duration: number };
+    };
+    assert.equal(dto.unitId, 401);
+    assert.equal(dto.finished, true);
+    assert.equal(dto.videoDto.duration, 120);
+    assert.equal(
+      saveCall.headers?.referer,
+      learnReferer({
+        course_id: "1001",
+        term_id: "2001",
+        school_short_name: "SJTU",
+      }),
+    );
+  });
+
+  test("malformed save response is page_structure_change", async () => {
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ code: 0, result: { duration: 60 } }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        return { statusCode: 200, body: "not-json<<<" };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "401",
+        school_short_name: "SJTU",
+      },
+      portsWith(async () => SESSION, http),
+    );
+    assert.equal(result.status, "page_structure_change");
+    assert.equal(result.isError, true);
+  });
+});
