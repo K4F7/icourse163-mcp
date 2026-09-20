@@ -190,6 +190,12 @@ export function todosFromMocTerm(
         todos.push(todo);
       }
     }
+    for (const homework of asArray(chapterRec.homeworks)) {
+      const todo = todoFromHomework(homework, course, now);
+      if (todo != null) {
+        todos.push(todo);
+      }
+    }
     for (const lesson of asArray(chapterRec.lessons)) {
       const lessonRec = asRecord(lesson);
       if (lessonRec == null) {
@@ -234,6 +240,36 @@ function todoFromQuiz(
   return toTodo({
     course,
     source: "quiz",
+    id,
+    name,
+    deadlineMs: signals.deadlineMs,
+  });
+}
+
+
+function todoFromHomework(
+  raw: unknown,
+  course: CoursePanelItem,
+  now: Date,
+): TodoItem | null {
+  const hw = asRecord(raw);
+  if (hw == null) {
+    return null;
+  }
+  const test = asRecord(hw.test) ?? {};
+  const name =
+    asNonEmptyString(hw.name) ?? asNonEmptyString(test.name) ?? "未知作业";
+  const id = asId(hw.id) ?? asId(test.id);
+  if (id == null) {
+    return null;
+  }
+  const signals = signalsFrom(test, hw, ["deadline", "endTime", "testEndTime"]);
+  if (!isOpenTodo(signals, now)) {
+    return null;
+  }
+  return toTodo({
+    course,
+    source: "homework",
     id,
     name,
     deadlineMs: signals.deadlineMs,
@@ -344,7 +380,7 @@ function collectStatusText(
 
 function toTodo(input: {
   course: CoursePanelItem;
-  source: "quiz" | "unit" | "exam";
+  source: "quiz" | "unit" | "exam" | "homework";
   id: string;
   name: string;
   deadlineMs: number | null;

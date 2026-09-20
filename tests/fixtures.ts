@@ -35,6 +35,20 @@ export const MIXED_MOC_TERM_DTO = {
     {
       id: 11,
       name: "第一章",
+      homeworks: [
+        {
+          id: 701,
+          name: "第一章作业",
+          contentType: 3,
+          contentId: 7011,
+          test: {
+            id: 7011,
+            deadline: FUTURE_MS,
+            userScore: 0,
+            usedTryCount: 0,
+          },
+        },
+      ],
       quizs: [
         {
           id: 301,

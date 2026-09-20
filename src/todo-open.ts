@@ -96,13 +96,13 @@ export function formatDueAtCst(deadlineMs: number): string {
 }
 
 export function inferTodoKind(input: {
-  source: "quiz" | "unit" | "exam";
+  source: "quiz" | "unit" | "exam" | "homework";
   name: string;
 }): string {
   if (input.source === "exam" || /考试/.test(input.name)) {
     return TODO_KIND_EXAM;
   }
-  if (/作业/.test(input.name)) {
+  if (input.source === "homework" || /作业/.test(input.name)) {
     return TODO_KIND_HOMEWORK;
   }
   return TODO_KIND_QUIZ;

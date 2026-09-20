@@ -29,3 +29,16 @@ HTTP 端口增加可选 `json` body（与既有 `form` 互斥），因试卷提�
 
 - 文档必须写清：save 必调、submit 仅用户确认后、exam 拒绝正式提交。
 - `todo_id` 复用 `list_todos` 复合 id。
+
+## 读卷 tid 解析（#27）
+
+`list_todos` 的 catalog id（`unit.id` / `quiz.id` / `homework.id` / `exam.id`）**不是** `getOpenQuizPaperDto` / `getOpenHomeworkPaperDto` 的 `tid`。读题前必须用 `getLastLearnedMocTermDto` 解析：
+
+| source | 目录字段 | 试卷 tid |
+|--------|----------|----------|
+| `unit` | `units[]` contentType 5 | `contentId` |
+| `quiz` | `chapters.quizs[]` | `contentId` 或 `test.id` |
+| `homework` | `chapters.homeworks[]` | `contentId` 或 `test.id` |
+| `exam` | `exams[]` | `contentId` 或 `test.id` |
+
+直接用 catalog id 作 tid 会得到 `code:0` 且 `result: null`（「试卷 result 为空」）。

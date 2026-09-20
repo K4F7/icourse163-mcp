@@ -1,5 +1,10 @@
 import { missingSessionFailure } from "./auth";
-import { learnReferer, resolveSession, type ToolError } from "./course-rpc";
+import {
+  fetchMocTermDto,
+  learnReferer,
+  resolveSession,
+  type ToolError,
+} from "./course-rpc";
 import {
   asArray,
   asFiniteNumber,
@@ -31,16 +36,22 @@ const TYPE_LABELS: Record<number, string> = {
   4: "问答题",
   5: "判断题",
   6: "阅读理解",
+  7: "编程题",
 };
 
-export type PaperType = "quiz" | "homework";
-
-export type ParsedTodoId = {
-  course_id: string;
-  term_id: string;
-  source: "quiz" | "unit" | "exam";
-  content_id: string;
-};
+export type {
+  PaperTarget,
+  PaperTargetFail,
+  PaperTargetOk,
+  PaperType,
+  ParsedTodoId,
+} from "./paper-resolve";
+export {
+  resolvePaperTarget,
+  resolvePaperType,
+} from "./paper-resolve";
+import type { PaperType, ParsedTodoId, PaperTargetOk } from "./paper-resolve";
+import { resolvePaperTarget, resolvePaperType } from "./paper-resolve";
 
 export type HomeworkOption = {
   id: string;
@@ -64,6 +75,7 @@ export type GetHomeworkStatus =
   | "ok"
   | "auth_expired"
   | "not_found"
+  | "unsupported"
   | "exam_out_of_scope"
   | "incomplete"
   | "error";
@@ -153,7 +165,12 @@ export function parseTodoId(todoId: string): ParsedTodoId | null {
   ) {
     return null;
   }
-  if (source !== "quiz" && source !== "unit" && source !== "exam") {
+  if (
+    source !== "quiz" &&
+    source !== "unit" &&
+    source !== "exam" &&
+    source !== "homework"
+  ) {
     return null;
   }
   return { course_id, term_id, source, content_id };
@@ -170,8 +187,20 @@ export function stripHtml(html: string | null | undefined): string | null {
     .replace(/&nbsp;/g, " ")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      // Drop zero-width / bidi markers that clutter stems.
+      if (code === 8203 || code === 8204 || code === 8205 || code === 8206 || code === 8207) {
+        return "";
+      }
+      try {
+        return String.fromCodePoint(code);
+      } catch {
+        return "";
+      }
+    })
+    .replace(/&amp;/g, "&")
     .replace(/\s+\n/g, "\n")
     .replace(/\n\s+/g, "\n")
     .trim();
@@ -269,17 +298,6 @@ export function parsePaperQuestions(
   return questions;
 }
 
-export function resolvePaperType(
-  parsed: ParsedTodoId,
-  override?: PaperType,
-): PaperType {
-  if (override != null) {
-    return override;
-  }
-  // Homework paper RPC is for subjective /hw pages; default quiz for chapter quizzes/units/exams.
-  return "quiz";
-}
-
 export async function getHomework(
   args: GetHomeworkArgs,
   ports?: Icourse163Ports,
@@ -304,7 +322,7 @@ export async function getHomework(
         {
           where: "todo_id",
           message:
-            "todo_id 格式应为 course_id:term_id:quiz|unit|exam:content_id（来自 list_todos）",
+            "todo_id 格式应为 course_id:term_id:quiz|unit|homework|exam:content_id（来自 list_todos）",
         },
       ],
     };
@@ -329,18 +347,37 @@ export async function getHomework(
     };
   }
 
-  const paperType = resolvePaperType(parsed, args.paper_type);
+  const course = {
+    course_id: parsed.course_id,
+    term_id: parsed.term_id,
+    school_short_name: args.school_short_name?.trim() ?? "",
+  };
+
+  const resolved = await resolvePaperTargetFromTerm({
+    http: ports.http,
+    cookie: session.cookie,
+    csrfKey: session.csrfKey,
+    parsed,
+    course,
+    paper_type: args.paper_type,
+  });
+  if (!resolved.ok) {
+    return {
+      ...base,
+      isError: true,
+      status: resolved.status,
+      errors: resolved.errors,
+    };
+  }
+
+  const paperType = resolved.paper_type;
   const fetched = await fetchPaperDto({
     http: ports.http,
     cookie: session.cookie,
     csrfKey: session.csrfKey,
-    tid: parsed.content_id,
+    tid: resolved.tid,
     paperType,
-    course: {
-      course_id: parsed.course_id,
-      term_id: parsed.term_id,
-      school_short_name: args.school_short_name?.trim() ?? "",
-    },
+    course,
   });
   if (!fetched.ok) {
     return {
@@ -359,11 +396,11 @@ export async function getHomework(
     todo_id: todoId,
     paper_type: paperType,
     aid: asId(fetched.paper.aid),
-    tid: asId(fetched.paper.tid) ?? parsed.content_id,
+    tid: asId(fetched.paper.tid) ?? resolved.tid,
     title:
       asNonEmptyString(fetched.paper.tname) ??
       asNonEmptyString(fetched.paper.name) ??
-      null,
+      resolved.title,
     questions,
     question_count: questions.length,
     draft_only: true,
@@ -455,7 +492,7 @@ async function persistAnswers(
         {
           where: "todo_id",
           message:
-            "todo_id 格式应为 course_id:term_id:quiz|unit|exam:content_id（来自 list_todos）",
+            "todo_id 格式应为 course_id:term_id:quiz|unit|homework|exam:content_id（来自 list_todos）",
         },
       ],
     };
@@ -512,18 +549,36 @@ async function persistAnswers(
     };
   }
 
-  const paperType = resolvePaperType(parsed, args.paper_type);
+  const course = {
+    course_id: parsed.course_id,
+    term_id: parsed.term_id,
+    school_short_name: args.school_short_name?.trim() ?? "",
+  };
+
+  const resolved = await resolvePaperTargetFromTerm({
+    http: ports.http,
+    cookie: session.cookie,
+    csrfKey: session.csrfKey,
+    parsed,
+    course,
+    paper_type: args.paper_type,
+  });
+  if (!resolved.ok) {
+    return {
+      ...empty,
+      status: resolved.status === "unsupported" ? "rejected" : resolved.status,
+      errors: resolved.errors,
+    };
+  }
+
+  const paperType = resolved.paper_type;
   const fetched = await fetchPaperDto({
     http: ports.http,
     cookie: session.cookie,
     csrfKey: session.csrfKey,
-    tid: parsed.content_id,
+    tid: resolved.tid,
     paperType,
-    course: {
-      course_id: parsed.course_id,
-      term_id: parsed.term_id,
-      school_short_name: args.school_short_name?.trim() ?? "",
-    },
+    course,
   });
   if (!fetched.ok) {
     return {
@@ -713,6 +768,51 @@ function emptyGet(todoId: string): GetHomeworkResult {
     draft_only: true,
     errors: [],
   };
+}
+
+
+async function resolvePaperTargetFromTerm(input: {
+  http: Icourse163Http;
+  cookie: string;
+  csrfKey: string;
+  parsed: ParsedTodoId;
+  course: { course_id: string; term_id: string; school_short_name: string };
+  paper_type?: PaperType;
+}): Promise<
+  | PaperTargetOk
+  | {
+      ok: false;
+      status: "not_found" | "unsupported" | "incomplete" | "error";
+      errors: ToolError[];
+    }
+> {
+  let moc: Record<string, unknown> | null;
+  try {
+    moc = await fetchMocTermDto({
+      http: input.http,
+      cookie: input.cookie,
+      csrfKey: input.csrfKey,
+      course: input.course,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      status: "error",
+      errors: [{ where: "term", message: `学期目录拉取失败: ${detail}` }],
+    };
+  }
+  if (moc == null) {
+    // Fall back: some older callers / mocks pass paper tid directly as content_id.
+    return {
+      ok: true,
+      tid: input.parsed.content_id,
+      paper_type: resolvePaperType(input.parsed, input.paper_type),
+      catalog_id: input.parsed.content_id,
+      title: null,
+    };
+  }
+  return resolvePaperTarget(input.parsed, moc, input.paper_type);
 }
 
 async function fetchPaperDto(input: {
