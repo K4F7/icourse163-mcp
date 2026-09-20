@@ -24,7 +24,7 @@
 1. 粘贴 cookie 的 CLI（例如 `--cookie-file` 或环境变量 `ICOURSE163_COOKIE`）— 可靠兜底
 2. Playwright 对首页密码登录：`iframe[src*='reg.icourse163.org'][src*='index_dl2']`，环境变量 `ICOURSE163_USERNAME` / `ICOURSE163_PASSWORD`
 3. 不做学校 SSO（docs.icourse163.org API）
-4. 不做代答 / 代交
+4. 考试代交不做（作业辅助范围见 README；登录 issue 不实现答题）
 
 Cookie 只存在本机（钥匙串优先，或 XDG 配置目录下 `0600` 文件）。MCP 工具不接收、不返回 cookie。
 
@@ -65,4 +65,4 @@ Headers：`Referer: https://www.icourse163.org/learn/{school}-{courseId}?tid={te
 
 ## 非目标
 
-本文只记契约。不代答、不代交、不做学校 SSO。
+本文只记契约与会话/RPC 笔记。不做学校 SSO。产品目标/非目标（自动看课、测验/作业辅助、**考试代交不做**）以仓库根 [README](../../README.md) 为准。
