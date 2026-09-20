@@ -2,10 +2,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { createLocalCredentialStore } from "./credentials";
 import { createFetchIcourse163Http } from "./http";
-import type { ListTodosPorts } from "./list-todos";
+import type { Icourse163Ports } from "./ports";
 import { createIcourse163McpServer } from "./server";
 
-function localStdioPorts(): ListTodosPorts {
+function localStdioPorts(): Icourse163Ports {
   return {
     credentials: createLocalCredentialStore(),
     http: createFetchIcourse163Http(),

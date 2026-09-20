@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { COURSE_LIST_RPC_URL, WARMUP_URL } from "../src/auth";
-import type { Icourse163Http, ListTodosPorts } from "../src/list-todos";
+import type { Icourse163Http, Icourse163Ports } from "../src/ports";
 import { createIcourse163McpServer } from "../src/server";
 import { EMPTY_COURSE_PANEL_BODY } from "./fixtures";
 
@@ -26,11 +26,8 @@ describe("icourse163 MCP server", () => {
       await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
 
       const listed = await client.listTools();
-      assert.equal(
-        listed.tools.some((tool) => tool.name === "list_todos"),
-        true,
-        "server must register list_todos",
-      );
+      const names = listed.tools.map((tool) => tool.name).sort();
+      assert.deepEqual(names, ["list_courses", "list_term_units", "list_todos"]);
 
       const result = await client.callTool({ name: "list_todos", arguments: {} });
       assert.equal("isError" in result && result.isError, true);
@@ -70,7 +67,7 @@ describe("icourse163 MCP server", () => {
         throw new Error(`unexpected url ${input.url}`);
       },
     };
-    const ports: ListTodosPorts = {
+    const ports: Icourse163Ports = {
       credentials: { getCookie: async () => "NTESSTUDYSI=test-session" },
       http,
     };
@@ -90,9 +87,45 @@ describe("icourse163 MCP server", () => {
       await server.close();
     }
   });
+  test("registers list_courses and list_term_units; auth_expired without session", async () => {
+    const server = createIcourse163McpServer({
+      credentials: { getCookie: async () => null },
+      http: {
+        async request() {
+          throw new Error("http should not run");
+        },
+      },
+    });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+      const courses = await client.callTool({ name: "list_courses", arguments: {} });
+      assert.equal("isError" in courses && courses.isError, true);
+      const coursesPayload = structuredPayload(courses);
+      assert.equal(coursesPayload.status, "auth_expired");
+      assert.deepEqual(coursesPayload.courses, []);
+
+      const units = await client.callTool({
+        name: "list_term_units",
+        arguments: { course_id: "1001", term_id: "2001", school_short_name: "SJTU" },
+      });
+      assert.equal("isError" in units && units.isError, true);
+      const unitsPayload = structuredPayload(units);
+      assert.equal(unitsPayload.status, "auth_expired");
+      assert.deepEqual(unitsPayload.lessons, []);
+      assert.equal(JSON.stringify(unitsPayload).includes("test-session"), false);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
 });
 
-function structuredPayload(result: unknown): { status: string; todos: unknown } {
+function structuredPayload(result: unknown): Record<string, unknown> {
   assert.ok(result !== null && typeof result === "object");
   const record = result as Record<string, unknown>;
 
@@ -102,7 +135,7 @@ function structuredPayload(result: unknown): { status: string; todos: unknown } 
     record.structuredContent !== undefined &&
     "status" in record.structuredContent
   ) {
-    return record.structuredContent as { status: string; todos: unknown };
+    return record.structuredContent as Record<string, unknown>;
   }
 
   assert.ok(Array.isArray(record.content) && record.content.length > 0);
@@ -112,5 +145,5 @@ function structuredPayload(result: unknown): { status: string; todos: unknown } 
   assert.equal(item.type, "text");
   const text = item.text;
   assert.equal(typeof text, "string");
-  return JSON.parse(text as string) as { status: string; todos: unknown };
+  return JSON.parse(text as string) as Record<string, unknown>;
 }

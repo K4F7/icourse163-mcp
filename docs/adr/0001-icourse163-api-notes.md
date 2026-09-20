@@ -2,7 +2,7 @@
 
 日期：2026-09-17
 
-本仓库只做本机 stdio MCP，工具面只有 `list_todos`。下列会话 / RPC 行为来自公开仓库的模式归纳，**不是**把那些实现拷进本仓。本文不含密钥、cookie、密码或个人 token。
+本仓库只做本机 stdio MCP，工具面含 `list_todos`、`list_courses`、`list_term_units`。下列会话 / RPC 行为来自公开仓库的模式归纳，**不是**把那些实现拷进本仓。本文不含密钥、cookie、密码或个人 token。
 
 ## 参考（只引模式与 URL，不拷代码）
 
@@ -56,10 +56,14 @@ Headers：`Referer: https://www.icourse163.org/learn/{school}-{courseId}?tid={te
 
 课程面板按 `courseType` 1（MOOC）和 2（SPOC）分页，`psize=20`，直到空页或短页。学期 RPC 的 Referer 必须是 `https://www.icourse163.org/learn/{school}-{courseId}?tid={termId}`，否则 `result` 可能为 null。
 
+## 课件单元类型（list_term_units）
+
+`chapters[].lessons[].units[].contentType`（与学校开放文档一致）：1 视频 → `video`；3 PDF / 4 富文本 → `doc`；5 随堂测验 → `quiz`；6 讨论、7 直播及其他 → `other`。章级 `quizs[]` 映射为 `quiz`。学习状态字段若存在则透出为 `learn_status` 字符串，否则 `null`。
+
 ## MCP 产品形态
 
 - 仓库根即 Node/TS stdio MCP（`npm start` = `node --import tsx src/stdio.ts`）
-- 工具只有 `list_todos`
+- 工具：`list_todos`、`list_courses`、`list_term_units`
 - `auth_expired` 等失败为 `isError`；`ok` + 空 `todos` 表示确实没有开放待办
 - MCP 永不接受密码；工具不返回 cookie
 

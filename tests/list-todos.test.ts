@@ -39,6 +39,7 @@ const MOOC_PANEL = {
   course_id: "1001",
   term_id: "2001",
   school_short_name: "SJTU",
+  type: "mooc" as const,
 };
 
 type RecordedCall = Icourse163HttpRequest;
@@ -100,6 +101,7 @@ describe("parseCoursePanelItems", () => {
         course_id: "1002",
         term_id: "2002",
         school_short_name: "SJTU",
+        type: "mooc",
       },
     ]);
   });

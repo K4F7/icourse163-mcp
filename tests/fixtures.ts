@@ -156,3 +156,62 @@ export const CLOSED_ONLY_MOC_TERM_DTO = {
     },
   ],
 };
+
+
+/** Catalog tree: video/doc/quiz/other units + chapter quiz with learn signals. */
+export const CATALOG_MOC_TERM_DTO = {
+  chapters: [
+    {
+      id: 11,
+      name: "第一章",
+      quizs: [
+        {
+          id: 301,
+          name: "第一章单元测验",
+          test: {
+            id: 3011,
+            usedTryCount: 2,
+            evaluateStatus: "已批改",
+          },
+        },
+      ],
+      lessons: [
+        {
+          id: 21,
+          name: "1.1 绪论",
+          units: [
+            {
+              id: 401,
+              name: "导论视频",
+              contentType: 1,
+              hasLearned: true,
+            },
+            {
+              id: 402,
+              name: "课件PDF",
+              contentType: 3,
+              hasLearned: false,
+            },
+            {
+              id: 403,
+              name: "富文本说明",
+              contentType: 4,
+            },
+            {
+              id: 404,
+              name: "随堂测验",
+              contentType: 5,
+              usedTryCount: 0,
+            },
+            {
+              id: 405,
+              name: "讨论",
+              contentType: 6,
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  exams: [],
+};
