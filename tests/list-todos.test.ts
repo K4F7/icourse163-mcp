@@ -121,7 +121,7 @@ describe("todosFromMocTerm", () => {
     assert.ok(moc != null);
     const todos = todosFromMocTerm(moc, MOOC_PANEL, NOW);
     const titles = todos.map((todo) => todo.title);
-    assert.deepEqual(titles.sort(), ["第一章单元测验", "旧版单元测验", "进行中的考试"].sort());
+    assert.deepEqual(titles.sort(), ["第一章单元测验", "第一章作业", "旧版单元测验", "进行中的考试"].sort());
     assert.equal(
       todos.some((todo) => todo.title === "已交的测验" || todo.title === "期末考试"),
       false,
@@ -138,6 +138,10 @@ describe("todosFromMocTerm", () => {
     const unit = todos.find((todo) => todo.title === "旧版单元测验");
     assert.ok(unit != null);
     assert.equal(unit.id, "1001:2001:unit:401");
+    const homework = todos.find((todo) => todo.title === "第一章作业");
+    assert.ok(homework);
+    assert.equal(homework.id, "1001:2001:homework:701");
+    assert.equal(homework.kind, "作业");
   });
 
   test("accepts result without mocTermDto wrapper", () => {
@@ -255,10 +259,10 @@ describe("listTodos", () => {
     const result = await listTodos(portsWith(async () => SESSION, http), NOW);
     assert.equal(result.status, "ok");
     assert.equal(result.isError, false);
-    assert.equal(result.todos.length, 3);
+    assert.equal(result.todos.length, 4);
     assert.deepEqual(
       result.todos.map((todo) => todo.title).sort(),
-      ["第一章单元测验", "旧版单元测验", "进行中的考试"].sort(),
+      ["第一章单元测验", "第一章作业", "旧版单元测验", "进行中的考试"].sort(),
     );
     const termCalls = calls.filter((call) => call.url.startsWith(TERM_RPC_URL));
     assert.equal(termCalls.length, 2);

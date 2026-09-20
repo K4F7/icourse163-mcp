@@ -46,8 +46,9 @@ Headers：`Referer: https://www.icourse163.org/learn/{school}-{courseId}?tid={te
 
 解析 `result.mocTermDto`（或 `result` 本身就是 mocTermDto）：
 
-- `chapters[].quizs[]`：优先读嵌套 `test`，再回退 quiz 自身。`deadline`（ms）、`userScore` / `testScore`、`usedTryCount`、`name` / `id`
-- `chapters[].lessons[].units[]` 中 `contentType==5`（旧测验单元）：`deadline` / `testEndTime`、`testScore`
+- `chapters[].quizs[]`：优先读嵌套 `test`，再回退 quiz 自身。`deadline`（ms）、`userScore` / `testScore`、`usedTryCount`、`name` / `id`；读卷 tid 用 `contentId` / `test.id`（不是 quiz.id）
+- `chapters[].homeworks[]`：与 quizs 同形，`contentType` 常为 3；`list_todos` source=`homework`；读卷走 `getOpenHomeworkPaperDto`，tid=`contentId` / `test.id`
+- `chapters[].lessons[].units[]` 中 `contentType==5`（旧测验单元）：`deadline` / `testEndTime`、`testScore`；读卷 tid=`contentId`（不是 unit.id）
 - `exams[]`：`endTime` / `deadline`、`name` / `title`、分数
 
 `due_at` 由 ms 截止时间格式化为 ISO `+08:00`；缺失则为 `null`。

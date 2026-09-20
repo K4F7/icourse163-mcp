@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { WARMUP_URL } from "../src/auth";
+import { TERM_RPC_URL, WARMUP_URL } from "../src/auth";
 import {
   HOMEWORK_PAPER_RPC_URL,
   QUIZ_PAPER_RPC_URL,
@@ -9,6 +9,7 @@ import {
   getHomework,
   parsePaperQuestions,
   parseTodoId,
+  resolvePaperTarget,
   saveHomeworkAnswers,
   stripHtml,
   submitHomework,
@@ -18,6 +19,7 @@ import type {
   Icourse163HttpRequest,
   Icourse163Ports,
 } from "../src/ports";
+import { mocTermBody } from "./fixtures";
 
 const SESSION = "NTESSTUDYSI=test-session";
 const TODO_QUIZ = "1001:2001:quiz:301";
@@ -108,6 +110,47 @@ function warmupOk(input: Icourse163HttpRequest): {
   return null;
 }
 
+/** Identity catalog: contentId === catalog id (legacy test fixtures). */
+function termEmptyOk(input: Icourse163HttpRequest): {
+  statusCode: number;
+  body: string;
+} | null {
+  if (input.url.startsWith(TERM_RPC_URL)) {
+    return {
+      statusCode: 200,
+      body: mocTermBody({
+        chapters: [
+          {
+            quizs: [
+              {
+                id: 301,
+                name: "第一章单元测验",
+                contentId: 301,
+                test: { id: 301 },
+              },
+            ],
+            homeworks: [],
+            lessons: [
+              {
+                units: [
+                  {
+                    id: 401,
+                    name: "旧版单元测验",
+                    contentType: 5,
+                    contentId: 401,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        exams: [{ id: 502, name: "考试", contentId: 502, test: { id: 502 } }],
+      }),
+    };
+  }
+  return null;
+}
+
 describe("parseTodoId / stripHtml / parsePaperQuestions", () => {
   test("parses list_todos compound id", () => {
     assert.deepEqual(parseTodoId(TODO_QUIZ), {
@@ -121,6 +164,10 @@ describe("parseTodoId / stripHtml / parsePaperQuestions", () => {
 
   test("strips html for stem text", () => {
     assert.equal(stripHtml("<p>1&nbsp;+&nbsp;1</p>"), "1 + 1");
+    assert.equal(
+      stripHtml("&#8205;身体形态是指&#8205;"),
+      "身体形态是指",
+    );
   });
 
   test("parses objective and subjective questions", () => {
@@ -155,6 +202,8 @@ describe("getHomework", () => {
     const { calls, http } = recordingHttp((input) => {
       const warmed = warmupOk(input);
       if (warmed) return warmed;
+      const term = termEmptyOk(input);
+      if (term) return term;
       if (input.url.startsWith(QUIZ_PAPER_RPC_URL)) {
         assert.equal(input.method, "POST");
         assert.ok(input.json != null);
@@ -181,6 +230,8 @@ describe("getHomework", () => {
     const { http } = recordingHttp((input) => {
       const warmed = warmupOk(input);
       if (warmed) return warmed;
+      const term = termEmptyOk(input);
+      if (term) return term;
       if (input.url.startsWith(HOMEWORK_PAPER_RPC_URL)) {
         assert.deepEqual(input.json, {
           tid: 301,
@@ -213,6 +264,8 @@ describe("saveHomeworkAnswers / submitHomework", () => {
     const { calls, http } = recordingHttp((input) => {
       const warmed = warmupOk(input);
       if (warmed) return warmed;
+      const term = termEmptyOk(input);
+      if (term) return term;
       if (input.url.startsWith(QUIZ_PAPER_RPC_URL)) {
         return { statusCode: 200, body: paperBody() };
       }
@@ -283,6 +336,8 @@ describe("saveHomeworkAnswers / submitHomework", () => {
     const { calls, http } = recordingHttp((input) => {
       const warmed = warmupOk(input);
       if (warmed) return warmed;
+      const term = termEmptyOk(input);
+      if (term) return term;
       if (input.url.startsWith(QUIZ_PAPER_RPC_URL)) {
         return { statusCode: 200, body: paperBody() };
       }
@@ -313,6 +368,8 @@ describe("saveHomeworkAnswers / submitHomework", () => {
     const { http } = recordingHttp((input) => {
       const warmed = warmupOk(input);
       if (warmed) return warmed;
+      const term = termEmptyOk(input);
+      if (term) return term;
       if (input.url.startsWith(QUIZ_PAPER_RPC_URL)) {
         return { statusCode: 200, body: paperBody() };
       }
@@ -331,5 +388,220 @@ describe("saveHomeworkAnswers / submitHomework", () => {
     assert.equal(result.submitted, false);
     assert.equal(result.preview, true);
     assert.equal(JSON.stringify(result).includes('"submitted":true'), false);
+  });
+});
+
+const TODO_UNIT = "1001:2001:unit:401";
+const TODO_HOMEWORK = "1001:2001:homework:701";
+
+/** mocTermDto where unit/quiz/homework catalog ids differ from paper tid (contentId). */
+const PAPER_RESOLVE_MOC = {
+  chapters: [
+    {
+      id: 11,
+      quizs: [
+        {
+          id: 301,
+          name: "第一章单元测验",
+          contentType: 2,
+          contentId: 9301,
+          test: { id: 9301, deadline: Date.now() + 86400000, usedTryCount: 0 },
+        },
+      ],
+      homeworks: [
+        {
+          id: 701,
+          name: "第1周编程练习",
+          contentType: 3,
+          contentId: 9701,
+          test: { id: 9701, deadline: Date.now() + 86400000, usedTryCount: 0 },
+        },
+      ],
+      lessons: [
+        {
+          id: 21,
+          units: [
+            {
+              id: 401,
+              name: "旧版单元测验",
+              contentType: 5,
+              contentId: 9401,
+              deadline: Date.now() + 86400000,
+              testScore: 0,
+              usedTryCount: 0,
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  exams: [
+    {
+      id: 502,
+      name: "进行中的考试",
+      contentId: 9502,
+      test: { id: 9502 },
+      deadline: Date.now() + 86400000,
+      usedTryCount: 0,
+    },
+  ],
+};
+
+describe("resolvePaperTarget", () => {
+  test("maps unit catalog id to contentId paper tid", () => {
+    const target = resolvePaperTarget(
+      { course_id: "1001", term_id: "2001", source: "unit", content_id: "401" },
+      PAPER_RESOLVE_MOC,
+    );
+    assert.deepEqual(target, {
+      ok: true,
+      tid: "9401",
+      paper_type: "quiz",
+      catalog_id: "401",
+      title: "旧版单元测验",
+    });
+  });
+
+  test("maps chapter quiz id to contentId / test.id", () => {
+    const target = resolvePaperTarget(
+      { course_id: "1001", term_id: "2001", source: "quiz", content_id: "301" },
+      PAPER_RESOLVE_MOC,
+    );
+    assert.equal(target.ok, true);
+    if (target.ok) {
+      assert.equal(target.tid, "9301");
+      assert.equal(target.paper_type, "quiz");
+    }
+  });
+
+  test("maps homework id to contentId and homework paper type", () => {
+    const target = resolvePaperTarget(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        source: "homework",
+        content_id: "701",
+      },
+      PAPER_RESOLVE_MOC,
+    );
+    assert.deepEqual(target, {
+      ok: true,
+      tid: "9701",
+      paper_type: "homework",
+      catalog_id: "701",
+      title: "第1周编程练习",
+    });
+  });
+
+  test("returns not_found for unknown catalog id", () => {
+    const target = resolvePaperTarget(
+      { course_id: "1001", term_id: "2001", source: "unit", content_id: "999" },
+      PAPER_RESOLVE_MOC,
+    );
+    assert.equal(target.ok, false);
+    if (!target.ok) {
+      assert.equal(target.status, "not_found");
+    }
+  });
+});
+
+describe("getHomework paper tid resolution", () => {
+  test("unit todo fetches paper with contentId not unit id", async () => {
+    const { calls, http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed) return warmed;
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(PAPER_RESOLVE_MOC) };
+      }
+      if (input.url.startsWith(QUIZ_PAPER_RPC_URL)) {
+        assert.deepEqual(input.json, { tid: 9401 });
+        return {
+          statusCode: 200,
+          body: paperBody({
+            aid: 1,
+            tid: 9401,
+            tname: "旧版单元测验",
+            objectiveQList: [
+              {
+                id: 11,
+                type: 1,
+                title: "<p>题干</p>",
+                optionDtos: [
+                  { id: 101, content: "A" },
+                  { id: 102, content: "B" },
+                ],
+              },
+            ],
+            subjectiveQList: [],
+          }),
+        };
+      }
+      throw new Error(`unexpected ${input.url}`);
+    });
+    const result = await getHomework(
+      { todo_id: TODO_UNIT, school_short_name: "SJTU" },
+      portsWith(async () => SESSION, http),
+    );
+    assert.equal(result.isError, false);
+    assert.equal(result.status, "ok");
+    assert.equal(result.question_count, 1);
+    assert.equal(result.questions[0].stem_text, "题干");
+    assert.equal(result.tid, "9401");
+    const paperCalls = calls.filter((c) => c.url.startsWith(QUIZ_PAPER_RPC_URL));
+    assert.equal(paperCalls.length, 1);
+    assert.deepEqual(paperCalls[0].json, { tid: 9401 });
+  });
+
+  test("homework todo uses homework paper RPC with contentId", async () => {
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed) return warmed;
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(PAPER_RESOLVE_MOC) };
+      }
+      if (input.url.startsWith(HOMEWORK_PAPER_RPC_URL)) {
+        assert.deepEqual(input.json, {
+          tid: 9701,
+          withStdAnswerAndAnalyse: false,
+        });
+        return {
+          statusCode: 200,
+          body: paperBody({
+            aid: 2,
+            tid: 9701,
+            tname: "第1周编程练习",
+            objectiveQList: [],
+            subjectiveQList: [{ id: 21, type: 7, title: "输出 Hello" }],
+          }),
+        };
+      }
+      throw new Error(`unexpected ${input.url}`);
+    });
+    const result = await getHomework(
+      { todo_id: TODO_HOMEWORK },
+      portsWith(async () => SESSION, http),
+    );
+    assert.equal(result.status, "ok");
+    assert.equal(result.paper_type, "homework");
+    assert.equal(result.questions[0].type, 7);
+    assert.equal(result.questions[0].stem_text, "输出 Hello");
+  });
+
+  test("clear not_found when catalog entry missing", async () => {
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed) return warmed;
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(PAPER_RESOLVE_MOC) };
+      }
+      throw new Error(`paper should not run: ${input.url}`);
+    });
+    const result = await getHomework(
+      { todo_id: "1001:2001:unit:999" },
+      portsWith(async () => SESSION, http),
+    );
+    assert.equal(result.isError, true);
+    assert.equal(result.status, "not_found");
+    assert.match(result.errors[0]?.message ?? "", /未在学期目录中找到|contentId|试卷/);
   });
 });

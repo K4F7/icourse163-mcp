@@ -136,6 +136,7 @@ describe("inferTodoKind", () => {
     assert.equal(inferTodoKind({ source: "exam", name: "期末" }), TODO_KIND_EXAM);
     assert.equal(inferTodoKind({ source: "quiz", name: "第三章作业" }), TODO_KIND_HOMEWORK);
     assert.equal(inferTodoKind({ source: "unit", name: "单元测验" }), TODO_KIND_QUIZ);
+    assert.equal(inferTodoKind({ source: "homework", name: "编程练习" }), TODO_KIND_HOMEWORK);
     assert.equal(inferTodoKind({ source: "quiz", name: "期中考试" }), TODO_KIND_EXAM);
   });
 });

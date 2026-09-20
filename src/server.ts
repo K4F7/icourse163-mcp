@@ -50,10 +50,10 @@ const STUDY_UNIT_DESCRIPTION = [
 
 const GET_HOMEWORK_DESCRIPTION = [
   "Read structured questions (stem + options) for one list_todos homework/quiz item on 中国大学MOOC.",
-  "Args: todo_id (course_id:term_id:quiz|unit|exam:content_id from list_todos); optional paper_type (quiz|homework); optional school_short_name.",
+  "Args: todo_id (course_id:term_id:quiz|unit|homework|exam:catalog_id from list_todos); optional paper_type (quiz|homework); optional school_short_name.",
   "Pipeline: get_homework (read) → AI fills → save_homework_answers REQUIRED (draft, preview=true) → optional user review → submit_homework ONLY after explicit user confirmation.",
   "Quizzes (in-class / video popup style todos) reuse this same read path. Exam: read is allowed; never auto-submit (submit_homework refuses exam).",
-  "Uses mocQuizRpcBean.getOpenQuizPaperDto / getOpenHomeworkPaperDto RPC (mockable). No cookies/passwords in args.",
+  "Resolves catalog id → paper tid (contentId) via mocTermDto, then mocQuizRpcBean.getOpenQuizPaperDto / getOpenHomeworkPaperDto (mockable). Supports chapter quiz, unit quiz, chapter homework. No cookies/passwords in args.",
 ].join(" ");
 
 const SAVE_HOMEWORK_DESCRIPTION = [
