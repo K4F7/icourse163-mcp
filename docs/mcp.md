@@ -151,11 +151,15 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 
 - Args: `course_id`, `term_id`, `unit_id` (from `list_courses` / `list_term_units`); optional `school_short_name`; optional `playback_rate` (0.5–2, default 1); optional `page_interval_sec` (0–10, default 1) for doc/PPT page-turn pacing (align OCS `readSpeed`).
 - Advances **video/audio** and **doc/PPT** (contentType 3/4) unit progress via official RPCs: resolve unit in `getLastLearnedMocTermDto`, optional `getLessonUnitLearnVo` (duration/videoId or `textPages`), then `saveMocContentLearn`. **No Playwright** in this implementation.
+- **Catalog duration**: video units often expose `durationInSeconds` (seconds). `study_unit` reads that field so progress can proceed without a successful learnVo.
+- **learnVo fallback**: if `getLessonUnitLearnVo` fails (e.g. `code=-1 系统异常`) but the catalog already has `contentId` + duration, save still proceeds. Missing both catalog duration and learnVo → `page_structure_change`.
 - Success: `status: "ok"`, `completed: true`, `learned_sec` / `duration_sec` / `percent` for video; `page_count` / `page_interval_sec` / `percent` for doc; `transport: "rpc"`.
 - Distinct failures (`isError`):
   - `non_media_unit` — unit is quiz/other (not video/audio/doc)
   - `auth_expired` — missing/expired session
-  - `page_structure_change` — unit missing from catalog, or learnVo/save response unparseable
+  - `page_structure_change` — unit missing from catalog, or learnVo/save response unparseable when catalog also lacks duration/pages
+  - `error` — including `saveMocContentLearn` business failures (see API blocker below)
+- **API blocker (`saveMocContentLearn` `-10006`)**: live calls may return `code=-2` with message `请检查本地时间是否和北京时间一致-10006` (sometimes `并发限制`). Observed 2026-09-21 on a non-school kaopei course with a valid logged-in session while box clock (Asia/Shanghai) matched the site `Date` header within ~0.2s. Tried and **did not** clear it: `edu-script-token` header, browser-like fetch headers, `clientTime` form field (API rejects unknown param), alternate DTO shapes (ms duration, partial progress, termId/courseId extras, doc `pageNum`). OCS `icourse.ts` advances media via Playwright DOM playback (`watchMedia` / PDF page clicks), **not** this RPC — so there is no in-repo safe signature/crypto path to copy. Until the platform accepts anonymous/RPC save again (or a documented signed payload exists), unit tests mock a successful save; live `study_unit` may still surface `-10006` as `status: "error"`.
 - **Video popup quizzes**: not auto-answered or silently submitted; use later quiz tools (read → AI → save).
 - **Limits / detection risk**: RPC progress reports can differ from real playback timing or page-turn traffic; platforms may flag this. Use only on accounts you own. Do not pass cookies/passwords. `playback_rate` / `page_interval_sec` are recorded on the result; the RPC path does not actually stream media or drive a PDF viewer.
 - Never pass accounts or cookies.

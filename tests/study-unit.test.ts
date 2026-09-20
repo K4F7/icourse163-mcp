@@ -96,6 +96,31 @@ const CATALOG_WITH_VIDEO_META = {
   exams: [],
 };
 
+const CATALOG_WITH_DURATION_IN_SECONDS = {
+  chapters: [
+    {
+      ...baseChapter,
+      lessons: [
+        {
+          ...baseLesson,
+          units: [
+            {
+              id: 1303386815,
+              name: "2小时揭秘大学信息差",
+              contentType: 1,
+              contentId: 1231832139,
+              durationInSeconds: 8369,
+              hasLearned: false,
+            },
+            ...baseLesson.units.slice(1),
+          ],
+        },
+      ],
+    },
+  ],
+  exams: [],
+};
+
 describe("findUnitInMocTerm", () => {
   test("finds video unit with content meta", () => {
     const found = findUnitInMocTerm(CATALOG_WITH_VIDEO_META, "401");
@@ -111,6 +136,14 @@ describe("findUnitInMocTerm", () => {
 
   test("returns null when unit missing", () => {
     assert.equal(findUnitInMocTerm(CATALOG_MOC_TERM_DTO, "999"), null);
+  });
+
+  test("reads catalog durationInSeconds as seconds (not ms)", () => {
+    const found = findUnitInMocTerm(CATALOG_WITH_DURATION_IN_SECONDS, "1303386815");
+    assert.ok(found != null);
+    assert.equal(found.content_id, "1231832139");
+    assert.equal(found.duration_sec, 8369);
+    assert.equal(found.unit_type, "video");
   });
 });
 
@@ -414,6 +447,56 @@ describe("studyUnit", () => {
     );
   });
 
+  test("learnVo failure still saves when catalog has contentId+durationInSeconds", async () => {
+    const { calls, http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: mocTermBody(CATALOG_WITH_DURATION_IN_SECONDS),
+        };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ code: -1, message: "系统异常" }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        return { statusCode: 200, body: JSON.stringify({ code: 0, result: {} }) };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1473617163",
+        term_id: "1475287452",
+        unit_id: "1303386815",
+        school_short_name: "kaopei",
+      },
+      portsWith(async () => SESSION, http),
+    );
+
+    assert.equal(result.status, "ok");
+    assert.equal(result.isError, false);
+    assert.equal(result.completed, true);
+    assert.equal(result.duration_sec, 8369);
+    assert.equal(result.learned_sec, 8369);
+    assert.equal(result.transport, "rpc");
+
+    const saveCall = calls.find((call) => call.url.startsWith(SAVE_LEARN_RPC_URL));
+    assert.ok(saveCall != null);
+    const dto = JSON.parse(saveCall.form!.dto!) as {
+      videoDto: { videoId: number; duration: number };
+    };
+    assert.equal(dto.videoDto.videoId, 1231832139);
+    assert.equal(dto.videoDto.duration, 8369);
+  });
+
   test("malformed save response is page_structure_change", async () => {
     const { http } = recordingHttp((input) => {
       const warmed = warmupOk(input);
@@ -446,4 +529,52 @@ describe("studyUnit", () => {
     assert.equal(result.status, "page_structure_change");
     assert.equal(result.isError, true);
   });
+
+  test("saveMocContentLearn -10006 is error with documented hint", async () => {
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: mocTermBody(CATALOG_WITH_DURATION_IN_SECONDS),
+        };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ code: -1, message: "系统异常" }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: -2,
+            message: "请检查本地时间是否和北京时间一致-10006",
+          }),
+        };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1473617163",
+        term_id: "1475287452",
+        unit_id: "1303386815",
+        school_short_name: "kaopei",
+      },
+      portsWith(async () => SESSION, http),
+    );
+
+    assert.equal(result.status, "error");
+    assert.equal(result.isError, true);
+    assert.equal(result.completed, false);
+    assert.match(result.errors[0]?.message ?? "", /10006/);
+    assert.match(result.errors[0]?.message ?? "", /docs\/mcp\.md/);
+  });
+
 });
