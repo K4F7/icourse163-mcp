@@ -117,3 +117,20 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 - `auth_expired` 以及其他失败都是 `isError`，不会伪装成「没有作业」。
 - stdio 使用本机会话存储与 HTTP 客户端：先 `probeSession`，再拉课程面板（MOOC+SPOC 分页）和每门课的 `getLastLearnedMocTermDto`（Referer 必须是 `learn/{school}-{courseId}?tid={termId}`）。
 - 不要传账号或 cookie；工具也不返回它们。登录、确认、清除会话见 [docs/login.md](login.md)。
+
+
+## `list_courses`
+
+- 列出已选课程（MOOC + SPOC 分页，与 `list_todos` 同一课程面板 RPC）。
+- 每条含 `id`、`name`、`school`、`type`（`mooc`|`spoc`）、`term_id`。
+- `status: ok` 且 `courses` 为空表示确实没有已选课。
+- `auth_expired` 以及其他失败都是 `isError`。
+- 不要传账号或 cookie。
+
+## `list_term_units`
+
+- 入参：`course_id`、`term_id`，可选 `school_short_name`（拼 learn Referer）。
+- 返回 lesson → unit 课件树；单元 `type` 为 `video`|`doc`|`quiz`|`other`（由官方 `contentType` 映射：1→video，3/4→doc，5→quiz，其余→other）。
+- 章级 `quizs` 会作为 `quiz` 课节出现。若 RPC 带学习信号（如 `hasLearned` / `evaluateStatus`），填入 `learn_status`，否则为 `null`。
+- 使用官方 `getLastLearnedMocTermDto` RPC（非 Playwright）。不代答、不代交；测验读写见后续 issue。
+- `auth_expired` 为 `isError`。不要传账号或 cookie。
