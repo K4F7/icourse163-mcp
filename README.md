@@ -6,7 +6,7 @@
 
 - 本地进程，stdio；不托管远端会话
 - 登录只走 CLI / 环境变量；MCP 工具不收密码
-- 工具：`list_todos`（仍开放待办）、`list_courses`（已选课）、`list_term_units`（课件目录 lesson→unit）、`study_unit`（视频/音频/文档 PPT 进度推进）
+- 工具：`list_todos`、`list_courses`、`list_term_units`、`study_unit`、`get_homework`、`save_homework_answers`、`submit_homework`
 
 产品目标尽量对齐 [OCS 中国大学MOOC 脚本](https://github.com/ocsjs/ocsjs/blob/4.0/packages/scripts/src/projects/icourse.ts) 的学习自动化；**明确不做考试代交**。
 
@@ -36,20 +36,16 @@ npm run login --silent -- --check
 - MCP 工具 `list_todos`：列出仍开放的作业 / 测验 / 考试待办
 - MCP 工具 `list_courses` / `list_term_units`：已选课与课件目录
 - MCP 工具 `study_unit`：对视频/音频/文档(PPT)单元 RPC 推进学习进度（见 docs/mcp.md 限制与检测风险）
+- MCP 工具 `get_homework` / `save_homework_answers` / `submit_homework`：作业/测验读题 + 草稿保存 + **显式**正式提交
 
-## 目标能力（后续 issue）
+## 答卷流水线（必读）
 
-对齐 OCS 的学习自动化范围。实现路径可选用本仓既有 **RPC** 风格、参考 OCS 的 **DOM/Playwright**，或二者混合——由后续 issue 细化：
+`get_homework`（读题）→ AI 填答 → **`save_homework_answers` 必调（草稿，`preview=true`）** →（可选）用户检查 → 仅在用户确认后显式 `submit_homework`（`preview=false`）
 
-- **自动看课**：视频/音频/文档(PPT)已由 `study_unit` 覆盖（RPC）；测验/作业见后续 issue
-- **测验 / 作业辅助**（工具语义与后续 #17 对齐）：固定流水线
-
-  `read`（结构化题干 + 选项）→ AI 填答 → **`save` 必调（保存草稿）** →（可选）用户检查确认后才显式 `submit`
-
-  - **作业**：AI 作答后**必须**调 `save`；再等用户检查后才显式 `submit`
-  - **考试**：代交仍不做；若做读题 + AI 作答，同样**必须** `save`，**绝不**自动提交
-  - **默认不交**：`submit` 仅在用户确认后显式调用
-  - **视频弹窗题**：复用同一套读题 + 预选 / `save`，勿静默提交
+- **作业 / 测验**：AI 作答后**必须** `save`；`save` 不可能正式提交；正式提交只用 `submit_homework`
+- **考试**：代交不做；`submit_homework` 拒绝 exam 来源 todo；若读题 + AI，同样必须 `save`，绝不自动提交
+- **默认不交**：没有隐式 submit
+- **视频弹窗 / 随堂测验**：复用同一套 get + save，勿静默提交
 
 ## 非目标
 

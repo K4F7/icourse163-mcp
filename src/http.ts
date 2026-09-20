@@ -133,7 +133,25 @@ function buildFetchInit(
     headers.set("user-agent", ICOURSE163_USER_AGENT);
   }
 
-  const sendBody = originalUrl != null && method === "POST" && input.form !== undefined;
+  const sendBody =
+    originalUrl != null &&
+    method === "POST" &&
+    (input.json !== undefined || input.form !== undefined);
+
+  if (sendBody && input.json !== undefined) {
+    if (input.form !== undefined) {
+      throw new Error("http_request_cannot_set_both_json_and_form");
+    }
+    if (!headers.has("content-type")) {
+      headers.set("content-type", "application/json;charset=UTF-8");
+    }
+    return {
+      method: "POST",
+      headers,
+      body: JSON.stringify(input.json),
+      redirect: "manual",
+    };
+  }
 
   if (sendBody) {
     if (!headers.has("content-type")) {

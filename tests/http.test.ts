@@ -47,4 +47,27 @@ describe("createFetchIcourse163Http", () => {
     await assert.rejects(() => http.request({ url: TRUSTED, cookie: COOKIE }));
     assert.deepEqual(calls, [TRUSTED]);
   });
+  test("sends JSON body when json is set", async () => {
+    let init: RequestInit | undefined;
+    const http = createFetchIcourse163Http(async (_url, requestInit) => {
+      init = requestInit;
+      return new Response(JSON.stringify({ code: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    await http.request({
+      url: TRUSTED,
+      cookie: COOKIE,
+      method: "POST",
+      json: { tid: 301, preview: true },
+    });
+
+    assert.ok(init != null);
+    assert.equal(init.method, "POST");
+    const headers = new Headers(init.headers);
+    assert.match(headers.get("content-type") ?? "", /application\/json/);
+    assert.equal(init.body, JSON.stringify({ tid: 301, preview: true }));
+  });
 });
