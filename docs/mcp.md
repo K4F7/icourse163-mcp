@@ -4,7 +4,7 @@
 
 工具目前只有 `list_todos`。登录只走 CLI，见 [docs/login.md](login.md)。MCP 从不接收或返回 cookie / 密码。
 
-产品目标对齐 OCS 学习自动化（自动看课、随堂测验/作业辅助；**考试代交不做**），详见仓库根 [README](../README.md)。实现可用 RPC 或 DOM/Playwright（或混合），由后续 issue 细化。
+产品目标对齐 OCS 学习自动化（自动看课、测验/作业辅助；**考试代交不做**），详见仓库根 [README](../README.md)。答卷流水线：`read` → AI 填答 → **`save` 必调（草稿）** → 用户确认后才显式 `submit`（默认不交）。实现可用 RPC 或 DOM/Playwright（或混合），由后续 issue 细化。
 
 ## 安装
 

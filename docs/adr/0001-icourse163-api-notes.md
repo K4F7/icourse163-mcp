@@ -65,4 +65,4 @@ Headers：`Referer: https://www.icourse163.org/learn/{school}-{courseId}?tid={te
 
 ## 非目标
 
-本文只记契约与会话/RPC 笔记。不做学校 SSO。产品目标/非目标（自动看课、测验/作业辅助、**考试代交不做**）以仓库根 [README](../../README.md) 为准。
+本文只记契约与会话/RPC 笔记。不做学校 SSO。产品目标/非目标（自动看课、测验/作业辅助、`save` 必调、**考试代交不做**）以仓库根 [README](../../README.md) 为准。
