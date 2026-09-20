@@ -15,6 +15,10 @@ import {
 } from "./json-util";
 import { mapContentType, type UnitType } from "./list-term-units";
 import type { Icourse163Http, Icourse163Ports } from "./ports";
+import {
+  createPlaywrightStudyRunner,
+  type StudyPlaywrightOutcome,
+} from "./study-playwright";
 
 export const SAVE_LEARN_RPC_PATH = "/web/j/courseBean.saveMocContentLearn.rpc";
 export const SAVE_LEARN_RPC_URL = `https://www.icourse163.org${SAVE_LEARN_RPC_PATH}`;
@@ -35,7 +39,11 @@ export type StudyUnitStatus =
   | "auth_expired"
   | "non_media_unit"
   | "page_structure_change"
+  | "needs_quiz_assist"
   | "error";
+
+/** rpc = saveMocContentLearn only; playwright = browser path; auto = RPC then Playwright on -10006-like blocks. */
+export type StudyTransport = "auto" | "rpc" | "playwright";
 
 export type StudyUnitArgs = {
   course_id: string;
@@ -45,6 +53,8 @@ export type StudyUnitArgs = {
   playback_rate?: number;
   /** Seconds between simulated PPT page turns (OCS readSpeed). Default 1; 0 skips delay. */
   page_interval_sec?: number;
+  /** Default auto: try RPC, fall back to Playwright on -10006 / 并发限制 / 本地时间 blocks. */
+  transport?: StudyTransport;
 };
 
 export type StudyUnitResult = {
@@ -61,7 +71,7 @@ export type StudyUnitResult = {
   playback_rate: number;
   page_count: number | null;
   page_interval_sec: number | null;
-  transport: "rpc" | null;
+  transport: "rpc" | "playwright" | null;
   errors: ToolError[];
 };
 
@@ -109,6 +119,24 @@ export function clampPageIntervalSec(value: number | undefined): number {
     MAX_PAGE_INTERVAL_SEC,
     Math.max(MIN_PAGE_INTERVAL_SEC, value),
   );
+}
+
+/** True for saveMocContentLearn failures that OCS bypasses via DOM playback (-10006 / clock / concurrency). */
+export function isLearnProgressBlockedMessage(message: string): boolean {
+  return (
+    /-10006\b/.test(message) ||
+    /本地时间/.test(message) ||
+    /并发限制/.test(message)
+  );
+}
+
+export function normalizeStudyTransport(
+  value: StudyTransport | undefined,
+): StudyTransport {
+  if (value === "rpc" || value === "playwright" || value === "auto") {
+    return value;
+  }
+  return "auto";
 }
 
 export function findUnitInMocTerm(
@@ -288,6 +316,9 @@ export async function studyUnit(
     };
   }
 
+  const transport = normalizeStudyTransport(args.transport);
+  const pageIntervalSec = clampPageIntervalSec(args.page_interval_sec);
+
   if (located.unit_type === "doc") {
     return studyDocUnit({
       base,
@@ -299,7 +330,8 @@ export async function studyUnit(
       session,
       ports,
       playbackRate,
-      pageIntervalSec: clampPageIntervalSec(args.page_interval_sec),
+      pageIntervalSec,
+      transport,
     });
   }
 
@@ -318,90 +350,19 @@ export async function studyUnit(
     };
   }
 
-  const referer = learnReferer(course);
-  let durationSec = located.duration_sec;
-  let contentId = located.content_id;
-
-  const learnVo = await fetchLessonUnitLearnVo({
-    http: ports.http,
-    cookie: session.cookie,
-    csrfKey: session.csrfKey,
-    contentId: contentId ?? unitId,
+  return studyVideoUnit({
+    base,
+    courseId,
+    termId,
     unitId,
-    contentType: 1,
-    referer,
+    located,
+    course,
+    session,
+    ports,
+    playbackRate,
+    pageIntervalSec,
+    transport,
   });
-  if (learnVo != null) {
-    if (learnVo.durationSec != null) {
-      durationSec = learnVo.durationSec;
-    }
-    if (learnVo.videoId != null) {
-      contentId = learnVo.videoId;
-    }
-  }
-
-  if (contentId == null || durationSec == null) {
-    return {
-      ...base,
-      isError: true,
-      status: "page_structure_change",
-      unit_type: "video",
-      errors: [
-        {
-          where: "learn_vo",
-          message:
-            "Could not resolve video contentId/duration (page/API structure may have changed)",
-        },
-      ],
-    };
-  }
-
-  const dto = buildVideoLearnDto({
-    unit_id: unitId,
-    content_id: contentId,
-    duration_sec: durationSec,
-  });
-
-  const saved = await saveLearnDto({
-    http: ports.http,
-    cookie: session.cookie,
-    csrfKey: session.csrfKey,
-    referer,
-    dto,
-  });
-  if (saved.kind !== "saved") {
-    const where =
-      saved.kind === "error"
-        ? saved.where
-        : saved.kind === "auth_expired"
-          ? "credentials"
-          : "save_learn";
-    return {
-      ...base,
-      isError: true,
-      status: saved.kind,
-      unit_type: "video",
-      errors: [{ where, message: saved.message }],
-    };
-  }
-
-  return {
-    isError: false,
-    status: "ok",
-    course_id: courseId,
-    term_id: termId,
-    unit_id: unitId,
-    unit_type: "video",
-    completed: true,
-    learned_sec: durationSec,
-    duration_sec: durationSec,
-    percent: 100,
-    playback_rate: playbackRate,
-    page_count: null,
-    page_interval_sec: null,
-    transport: "rpc",
-    errors: [],
-  };
 }
 
 function emptyResult(
@@ -583,7 +544,7 @@ async function saveLearnDto(input: {
   return { kind: "saved" };
 }
 
-async function studyDocUnit(input: {
+async function studyVideoUnit(input: {
   base: Omit<StudyUnitResult, "isError" | "status" | "errors">;
   courseId: string;
   termId: string;
@@ -594,6 +555,7 @@ async function studyDocUnit(input: {
   ports: Icourse163Ports;
   playbackRate: number;
   pageIntervalSec: number;
+  transport: StudyTransport;
 }): Promise<StudyUnitResult> {
   const {
     base,
@@ -606,10 +568,181 @@ async function studyDocUnit(input: {
     ports,
     playbackRate,
     pageIntervalSec,
+    transport,
+  } = input;
+
+  const referer = learnReferer(course);
+  let durationSec = located.duration_sec;
+  let contentId = located.content_id;
+
+  const learnVo = await fetchLessonUnitLearnVo({
+    http: ports.http,
+    cookie: session.cookie,
+    csrfKey: session.csrfKey,
+    contentId: contentId ?? unitId,
+    unitId,
+    contentType: 1,
+    referer,
+  });
+  if (learnVo != null) {
+    if (learnVo.durationSec != null) {
+      durationSec = learnVo.durationSec;
+    }
+    if (learnVo.videoId != null) {
+      contentId = learnVo.videoId;
+    }
+  }
+
+  if (transport === "playwright") {
+    return runPlaywrightStudy({
+      base,
+      courseId,
+      termId,
+      unitId,
+      located: { ...located, content_id: contentId, duration_sec: durationSec },
+      course,
+      session,
+      ports,
+      playbackRate,
+      pageIntervalSec,
+      unitType: "video",
+      priorErrors: [],
+    });
+  }
+
+  if (contentId == null || durationSec == null) {
+    return {
+      ...base,
+      isError: true,
+      status: "page_structure_change",
+      unit_type: "video",
+      errors: [
+        {
+          where: "learn_vo",
+          message:
+            "Could not resolve video contentId/duration (page/API structure may have changed)",
+        },
+      ],
+    };
+  }
+
+  const dto = buildVideoLearnDto({
+    unit_id: unitId,
+    content_id: contentId,
+    duration_sec: durationSec,
+  });
+
+  const saved = await saveLearnDto({
+    http: ports.http,
+    cookie: session.cookie,
+    csrfKey: session.csrfKey,
+    referer,
+    dto,
+  });
+  if (saved.kind === "saved") {
+    return {
+      isError: false,
+      status: "ok",
+      course_id: courseId,
+      term_id: termId,
+      unit_id: unitId,
+      unit_type: "video",
+      completed: true,
+      learned_sec: durationSec,
+      duration_sec: durationSec,
+      percent: 100,
+      playback_rate: playbackRate,
+      page_count: null,
+      page_interval_sec: null,
+      transport: "rpc",
+      errors: [],
+    };
+  }
+
+  const where =
+    saved.kind === "error"
+      ? saved.where
+      : saved.kind === "auth_expired"
+        ? "credentials"
+        : "save_learn";
+  const rpcError = { where, message: saved.message };
+
+  if (
+    transport === "auto" &&
+    saved.kind === "error" &&
+    isLearnProgressBlockedMessage(saved.message)
+  ) {
+    return runPlaywrightStudy({
+      base,
+      courseId,
+      termId,
+      unitId,
+      located: { ...located, content_id: contentId, duration_sec: durationSec },
+      course,
+      session,
+      ports,
+      playbackRate,
+      pageIntervalSec,
+      unitType: "video",
+      priorErrors: [rpcError],
+    });
+  }
+
+  return {
+    ...base,
+    isError: true,
+    status: saved.kind,
+    unit_type: "video",
+    errors: [rpcError],
+  };
+}
+
+async function studyDocUnit(input: {
+  base: Omit<StudyUnitResult, "isError" | "status" | "errors">;
+  courseId: string;
+  termId: string;
+  unitId: string;
+  located: LocatedUnit;
+  course: { course_id: string; term_id: string; school_short_name: string };
+  session: { cookie: string; csrfKey: string };
+  ports: Icourse163Ports;
+  playbackRate: number;
+  pageIntervalSec: number;
+  transport: StudyTransport;
+}): Promise<StudyUnitResult> {
+  const {
+    base,
+    courseId,
+    termId,
+    unitId,
+    located,
+    course,
+    session,
+    ports,
+    playbackRate,
+    pageIntervalSec,
+    transport,
   } = input;
   const contentType = located.content_type ?? 3;
   const referer = learnReferer(course);
   const contentId = located.content_id ?? unitId;
+
+  if (transport === "playwright") {
+    return runPlaywrightStudy({
+      base,
+      courseId,
+      termId,
+      unitId,
+      located,
+      course,
+      session,
+      ports,
+      playbackRate,
+      pageIntervalSec,
+      unitType: "doc",
+      priorErrors: [],
+    });
+  }
 
   const learnVo = await fetchLessonUnitLearnVo({
     http: ports.http,
@@ -661,40 +794,225 @@ async function studyDocUnit(input: {
     referer,
     dto,
   });
-  if (saved.kind !== "saved") {
-    const where =
-      saved.kind === "error"
-        ? saved.where
-        : saved.kind === "auth_expired"
-          ? "credentials"
-          : "save_learn";
+  if (saved.kind === "saved") {
+    return {
+      isError: false,
+      status: "ok",
+      course_id: courseId,
+      term_id: termId,
+      unit_id: unitId,
+      unit_type: "doc",
+      completed: true,
+      learned_sec: null,
+      duration_sec: null,
+      percent: 100,
+      playback_rate: playbackRate,
+      page_count: pageCount,
+      page_interval_sec: pageIntervalSec,
+      transport: "rpc",
+      errors: [],
+    };
+  }
+
+  const where =
+    saved.kind === "error"
+      ? saved.where
+      : saved.kind === "auth_expired"
+        ? "credentials"
+        : "save_learn";
+  const rpcError = { where, message: saved.message };
+
+  if (
+    transport === "auto" &&
+    saved.kind === "error" &&
+    isLearnProgressBlockedMessage(saved.message)
+  ) {
+    return runPlaywrightStudy({
+      base,
+      courseId,
+      termId,
+      unitId,
+      located,
+      course,
+      session,
+      ports,
+      playbackRate,
+      pageIntervalSec,
+      unitType: "doc",
+      priorErrors: [rpcError],
+    });
+  }
+
+  return {
+    ...base,
+    isError: true,
+    status: saved.kind,
+    unit_type: "doc",
+    page_count: pageCount,
+    page_interval_sec: pageIntervalSec,
+    errors: [rpcError],
+  };
+}
+
+async function runPlaywrightStudy(input: {
+  base: Omit<StudyUnitResult, "isError" | "status" | "errors">;
+  courseId: string;
+  termId: string;
+  unitId: string;
+  located: LocatedUnit;
+  course: { course_id: string; term_id: string; school_short_name: string };
+  session: { cookie: string; csrfKey: string };
+  ports: Icourse163Ports;
+  playbackRate: number;
+  pageIntervalSec: number;
+  unitType: "video" | "doc";
+  priorErrors: ToolError[];
+}): Promise<StudyUnitResult> {
+  const {
+    base,
+    courseId,
+    termId,
+    unitId,
+    located,
+    course,
+    session,
+    ports,
+    playbackRate,
+    pageIntervalSec,
+    unitType,
+    priorErrors,
+  } = input;
+
+  const runner = ports.studyPlaywright ?? createPlaywrightStudyRunner();
+  let outcome: StudyPlaywrightOutcome;
+  try {
+    outcome = await runner.studyUnitInBrowser({
+      cookie: session.cookie,
+      course_id: course.course_id,
+      term_id: course.term_id,
+      school_short_name: course.school_short_name,
+      unit_id: unitId,
+      unit_name: located.name,
+      content_id: located.content_id,
+      unit_type: unitType,
+      content_type: located.content_type,
+      playback_rate: playbackRate,
+      page_interval_sec: pageIntervalSec,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     return {
       ...base,
       isError: true,
-      status: saved.kind,
-      unit_type: "doc",
-      page_count: pageCount,
-      page_interval_sec: pageIntervalSec,
-      errors: [{ where, message: saved.message }],
+      status: "error",
+      unit_type: unitType,
+      page_interval_sec: unitType === "doc" ? pageIntervalSec : null,
+      errors: [
+        ...priorErrors,
+        { where: "playwright", message: detail },
+      ],
+    };
+  }
+
+  return mapPlaywrightOutcome({
+    base,
+    courseId,
+    termId,
+    unitId,
+    unitType,
+    playbackRate,
+    pageIntervalSec,
+    outcome,
+    priorErrors,
+  });
+}
+
+function mapPlaywrightOutcome(input: {
+  base: Omit<StudyUnitResult, "isError" | "status" | "errors">;
+  courseId: string;
+  termId: string;
+  unitId: string;
+  unitType: "video" | "doc";
+  playbackRate: number;
+  pageIntervalSec: number;
+  outcome: StudyPlaywrightOutcome;
+  priorErrors: ToolError[];
+}): StudyUnitResult {
+  const {
+    base,
+    courseId,
+    termId,
+    unitId,
+    unitType,
+    playbackRate,
+    pageIntervalSec,
+    outcome,
+    priorErrors,
+  } = input;
+
+  if (outcome.kind === "completed") {
+    return {
+      isError: false,
+      status: "ok",
+      course_id: courseId,
+      term_id: termId,
+      unit_id: unitId,
+      unit_type: unitType,
+      completed: true,
+      learned_sec: outcome.learned_sec,
+      duration_sec: outcome.duration_sec,
+      percent: outcome.percent,
+      playback_rate: playbackRate,
+      page_count: outcome.page_count,
+      page_interval_sec: unitType === "doc" ? pageIntervalSec : null,
+      transport: "playwright",
+      errors: [],
+    };
+  }
+
+  if (outcome.kind === "needs_quiz_assist") {
+    return {
+      ...base,
+      isError: true,
+      status: "needs_quiz_assist",
+      unit_type: unitType,
+      completed: false,
+      learned_sec: outcome.learned_sec,
+      duration_sec: outcome.duration_sec,
+      transport: "playwright",
+      errors: [
+        ...priorErrors,
+        { where: "playwright_quiz", message: outcome.message },
+      ],
+    };
+  }
+
+  if (outcome.kind === "page_structure_change") {
+    return {
+      ...base,
+      isError: true,
+      status: "page_structure_change",
+      unit_type: unitType,
+      page_interval_sec: unitType === "doc" ? pageIntervalSec : null,
+      transport: "playwright",
+      errors: [
+        ...priorErrors,
+        { where: "playwright", message: outcome.message },
+      ],
     };
   }
 
   return {
-    isError: false,
-    status: "ok",
-    course_id: courseId,
-    term_id: termId,
-    unit_id: unitId,
-    unit_type: "doc",
-    completed: true,
-    learned_sec: null,
-    duration_sec: null,
-    percent: 100,
-    playback_rate: playbackRate,
-    page_count: pageCount,
-    page_interval_sec: pageIntervalSec,
-    transport: "rpc",
-    errors: [],
+    ...base,
+    isError: true,
+    status: "error",
+    unit_type: unitType,
+    page_interval_sec: unitType === "doc" ? pageIntervalSec : null,
+    transport: "playwright",
+    errors: [
+      ...priorErrors,
+      { where: "playwright", message: outcome.message },
+    ],
   };
 }
 
