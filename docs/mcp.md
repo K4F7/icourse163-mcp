@@ -8,6 +8,19 @@
 
 ## 安装
 
+### Agent Plugin（local）
+
+仓库根提供 Agent Plugins 1.0.0 最小壳：`plugin.json`、`mcp.json`（`command: ./scripts/run-mcp.sh`，`cwd: ${PLUGIN_ROOT}`）、`skills/login-config`。不发布 marketplace。
+
+本地安装验证：
+
+1. 将宿主插件根指向本仓库目录。
+2. 在插件根执行 `npm ci`。
+3. 按 [login.md](login.md) 或 skill `login-config` 用 CLI 登录（`npm run login`）；禁止在对话中收集密码 / cookie。
+4. 启动后调用 `list_todos` 验证会话（`ok` 可为空；`auth_expired` 需重登）。
+
+### npm
+
 在仓库根：
 
 ```sh
@@ -117,7 +130,6 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 - `auth_expired` 以及其他失败都是 `isError`，不会伪装成「没有作业」。
 - stdio 使用本机会话存储与 HTTP 客户端：先 `probeSession`，再拉课程面板（MOOC+SPOC 分页）和每门课的 `getLastLearnedMocTermDto`（Referer 必须是 `learn/{school}-{courseId}?tid={termId}`）。
 - 不要传账号或 cookie；工具也不返回它们。登录、确认、清除会话见 [docs/login.md](login.md)。
-
 
 ## `list_courses`
 
