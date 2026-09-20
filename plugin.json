@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "icourse163-mcp",
+  "version": "0.1.0",
+  "description": "中国大学MOOC 本机 stdio MCP：list_todos、list_courses、list_term_units、study_unit、get_homework、save_homework_answers、submit_homework。CLI 登录；MCP 不收密。",
+  "repository": "https://github.com/K4F7/icourse163-mcp",
+  "license": "UNLICENSED",
+  "keywords": ["icourse163", "mooc", "mcp", "stdio"]
+}

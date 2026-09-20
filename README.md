@@ -12,6 +12,17 @@
 
 ## 安装 / 启动
 
+### Agent Plugin（local）
+
+本仓根已有 Agent Plugins 1.0.0 最小壳（`plugin.json` + `mcp.json` + `skills/login-config`），**不发布 marketplace**。宿主若支持本地插件根：
+
+1. 把插件根指到本仓库绝对路径（或 clone 后的目录）。
+2. `mcp.json` 用 `./scripts/run-mcp.sh`，`cwd` 为 `${PLUGIN_ROOT}`（包装脚本已存在）。
+3. 先在插件根 `npm ci`，再按 [docs/login.md](docs/login.md) / skill `login-config` 做 CLI 登录；**不要**在对话里贴密码或 cookie。
+4. 登录后用 MCP `list_todos` 验证（`status: ok` 可为空待办；`auth_expired` 需重登）。
+
+### npm / AddMcpServer
+
 ```sh
 npm ci
 npm start --silent
