@@ -18,3 +18,8 @@
 - 视频弹窗题不在此工具静默提交（`needs_quiz_assist` → read/save 流水线）。
 - `playback_rate` / `page_interval_sec` 对 Playwright 路径生效；RPC 路径主要记录参数。
 - 单测默认 `ICOURSE163_DISALLOW_LIVE_PLAYWRIGHT=1`，强制注入 mock runner，避免 CI 拉起 Chrome。
+
+## Revision (#30)
+
+Playwright navigation prefers OCS-style **课件 tree click** after warming `/learn/...` (wait for SPA hydrate, dismiss ant-modal, click `[data-cid]`). Hash deep-links are fallback only. `study_unit` results expose `nav_strategy` and `course_kind` for school vs non-school triage.
+

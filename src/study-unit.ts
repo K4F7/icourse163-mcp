@@ -16,7 +16,10 @@ import {
 import { mapContentType, type UnitType } from "./list-term-units";
 import type { Icourse163Http, Icourse163Ports } from "./ports";
 import {
+  classifyCourseKind,
   createPlaywrightStudyRunner,
+  type CourseKind,
+  type NavStrategy,
   type StudyPlaywrightOutcome,
 } from "./study-playwright";
 
@@ -72,6 +75,10 @@ export type StudyUnitResult = {
   page_count: number | null;
   page_interval_sec: number | null;
   transport: "rpc" | "playwright" | null;
+  /** Present on Playwright path: tree_click | deeplink_fallback | warm_learn. */
+  nav_strategy: NavStrategy | null;
+  /** school SPOC vs non_school (e.g. kaopei) track. */
+  course_kind: CourseKind | null;
   errors: ToolError[];
 };
 
@@ -384,6 +391,8 @@ function emptyResult(
     page_count: null,
     page_interval_sec: null,
     transport: null,
+    nav_strategy: null,
+    course_kind: null,
   };
 }
 
@@ -655,6 +664,8 @@ async function studyVideoUnit(input: {
       page_count: null,
       page_interval_sec: null,
       transport: "rpc",
+      nav_strategy: null,
+      course_kind: classifyCourseKind(course.school_short_name),
       errors: [],
     };
   }
@@ -810,6 +821,8 @@ async function studyDocUnit(input: {
       page_count: pageCount,
       page_interval_sec: pageIntervalSec,
       transport: "rpc",
+      nav_strategy: null,
+      course_kind: classifyCourseKind(course.school_short_name),
       errors: [],
     };
   }
@@ -924,6 +937,7 @@ async function runPlaywrightStudy(input: {
     pageIntervalSec,
     outcome,
     priorErrors,
+    courseKind: classifyCourseKind(course.school_short_name),
   });
 }
 
@@ -937,6 +951,7 @@ function mapPlaywrightOutcome(input: {
   pageIntervalSec: number;
   outcome: StudyPlaywrightOutcome;
   priorErrors: ToolError[];
+  courseKind: CourseKind;
 }): StudyUnitResult {
   const {
     base,
@@ -948,7 +963,10 @@ function mapPlaywrightOutcome(input: {
     pageIntervalSec,
     outcome,
     priorErrors,
+    courseKind,
   } = input;
+
+  const navStrategy = outcome.nav_strategy ?? null;
 
   if (outcome.kind === "completed") {
     return {
@@ -966,6 +984,8 @@ function mapPlaywrightOutcome(input: {
       page_count: outcome.page_count,
       page_interval_sec: unitType === "doc" ? pageIntervalSec : null,
       transport: "playwright",
+      nav_strategy: navStrategy,
+      course_kind: courseKind,
       errors: [],
     };
   }
@@ -980,6 +1000,8 @@ function mapPlaywrightOutcome(input: {
       learned_sec: outcome.learned_sec,
       duration_sec: outcome.duration_sec,
       transport: "playwright",
+      nav_strategy: navStrategy,
+      course_kind: courseKind,
       errors: [
         ...priorErrors,
         { where: "playwright_quiz", message: outcome.message },
@@ -995,6 +1017,8 @@ function mapPlaywrightOutcome(input: {
       unit_type: unitType,
       page_interval_sec: unitType === "doc" ? pageIntervalSec : null,
       transport: "playwright",
+      nav_strategy: navStrategy,
+      course_kind: courseKind,
       errors: [
         ...priorErrors,
         { where: "playwright", message: outcome.message },
@@ -1009,6 +1033,8 @@ function mapPlaywrightOutcome(input: {
     unit_type: unitType,
     page_interval_sec: unitType === "doc" ? pageIntervalSec : null,
     transport: "playwright",
+    nav_strategy: navStrategy,
+    course_kind: courseKind,
     errors: [
       ...priorErrors,
       { where: "playwright", message: outcome.message },
