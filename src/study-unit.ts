@@ -427,6 +427,12 @@ function emptyResult(
 }
 
 function firstPositiveDuration(unit: Record<string, unknown>): number | null {
+  // Catalog units often expose durationInSeconds (seconds, not ms). Prefer it so
+  // long videos (>10000s) are not mis-scaled by the ms heuristic below.
+  const secondsField = asFiniteNumber(unit.durationInSeconds);
+  if (secondsField != null && secondsField > 0) {
+    return Math.floor(secondsField);
+  }
   const raw = firstNumber(
     unit.duration,
     unit.videoTime,
@@ -563,10 +569,15 @@ async function saveLearnDto(input: {
     };
   }
   if (saveJson.code !== 0) {
+    const apiMessage = asNonEmptyString(saveJson.message) ?? "";
+    const detail =
+      apiMessage.includes("10006") || String(saveJson.code) === "-10006"
+        ? `${apiMessage} (API anti-abuse; box clock matching Beijing does not clear this — see docs/mcp.md)`
+        : apiMessage;
     return {
       kind: "error",
       where: "save_learn",
-      message: `saveMocContentLearn code=${String(saveJson.code)} ${asNonEmptyString(saveJson.message) ?? ""}`.trim(),
+      message: `saveMocContentLearn code=${String(saveJson.code)} ${detail}`.trim(),
     };
   }
   return { kind: "saved" };
