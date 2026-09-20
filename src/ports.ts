@@ -1,3 +1,5 @@
+import type { StudyPlaywrightRunner } from "./study-playwright";
+
 export type CredentialStore = {
   getCookie(): Promise<string | null>;
 };
@@ -27,4 +29,6 @@ export type Icourse163Http = {
 export type Icourse163Ports = {
   credentials: CredentialStore;
   http: Icourse163Http;
+  /** Optional Playwright study runner (injectable for tests). */
+  studyPlaywright?: StudyPlaywrightRunner;
 };

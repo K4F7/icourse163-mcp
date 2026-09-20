@@ -46,7 +46,7 @@ npm run login --silent -- --check
 - CLI 登录（cookie 文件 / Playwright 账密；见 [docs/login.md](docs/login.md)）
 - MCP 工具 `list_todos`：列出仍开放的作业 / 测验 / 考试待办
 - MCP 工具 `list_courses` / `list_term_units`：已选课与课件目录
-- MCP 工具 `study_unit`：对视频/音频/文档(PPT)单元 RPC 推进学习进度（见 docs/mcp.md 限制与检测风险）
+- MCP 工具 `study_unit`：对视频/音频/文档(PPT)单元以 RPC 和/或 Playwright（OCS 对齐）推进学习进度；默认 RPC，遇 -10006 回退浏览器（见 docs/mcp.md）
 - MCP 工具 `get_homework` / `save_homework_answers` / `submit_homework`：作业/测验读题 + 草稿保存 + **显式**正式提交
 
 ## 答卷流水线（必读）

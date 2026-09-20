@@ -10,6 +10,7 @@ import {
   buildVideoLearnDto,
   clampPageIntervalSec,
   findUnitInMocTerm,
+  isLearnProgressBlockedMessage,
   studyUnit,
 } from "../src/study-unit";
 import type {
@@ -566,6 +567,7 @@ describe("studyUnit", () => {
         term_id: "1475287452",
         unit_id: "1303386815",
         school_short_name: "kaopei",
+        transport: "rpc",
       },
       portsWith(async () => SESSION, http),
     );
@@ -573,8 +575,332 @@ describe("studyUnit", () => {
     assert.equal(result.status, "error");
     assert.equal(result.isError, true);
     assert.equal(result.completed, false);
+    assert.equal(result.transport, null);
     assert.match(result.errors[0]?.message ?? "", /10006/);
     assert.match(result.errors[0]?.message ?? "", /docs\/mcp\.md/);
   });
 
+});
+
+describe("isLearnProgressBlockedMessage", () => {
+  test("detects -10006 / clock / concurrency blockers", () => {
+    assert.equal(
+      isLearnProgressBlockedMessage(
+        "saveMocContentLearn code=-2 请检查本地时间是否和北京时间一致-10006",
+      ),
+      true,
+    );
+    assert.equal(isLearnProgressBlockedMessage("并发限制"), true);
+    assert.equal(isLearnProgressBlockedMessage("普通错误"), false);
+  });
+});
+
+describe("studyUnit Playwright fallback", () => {
+  test("falls back to playwright when save returns -10006 (transport=auto)", async () => {
+    let playwrightCalls = 0;
+    const { calls, http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: 0,
+            result: { duration: 120, videoId: 9001 },
+          }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: -2,
+            message: "请检查本地时间是否和北京时间一致-10006",
+          }),
+        };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "401",
+        school_short_name: "SJTU",
+        transport: "auto",
+      },
+      {
+        ...portsWith(async () => SESSION, http),
+        studyPlaywright: {
+          async studyUnitInBrowser(args) {
+            playwrightCalls += 1;
+            assert.equal(args.unit_id, "401");
+            assert.equal(args.unit_type, "video");
+            assert.ok(args.cookie.includes("NTESSTUDYSI"));
+            return {
+              kind: "completed",
+              learned_sec: 120,
+              duration_sec: 120,
+              page_count: null,
+              percent: 100,
+            };
+          },
+        },
+      },
+    );
+
+    assert.equal(result.status, "ok");
+    assert.equal(result.isError, false);
+    assert.equal(result.transport, "playwright");
+    assert.equal(result.completed, true);
+    assert.equal(playwrightCalls, 1);
+    assert.ok(calls.some((call) => call.url.startsWith(SAVE_LEARN_RPC_URL)));
+    assert.equal(JSON.stringify(result).includes("test-session"), false);
+  });
+
+  test("transport=rpc does not fall back on -10006", async () => {
+    let playwrightCalls = 0;
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: 0,
+            result: { duration: 120, videoId: 9001 },
+          }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: -2,
+            message: "请检查本地时间是否和北京时间一致-10006",
+          }),
+        };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "401",
+        school_short_name: "SJTU",
+        transport: "rpc",
+      },
+      {
+        ...portsWith(async () => SESSION, http),
+        studyPlaywright: {
+          async studyUnitInBrowser() {
+            playwrightCalls += 1;
+            return {
+              kind: "completed",
+              learned_sec: 1,
+              duration_sec: 1,
+              page_count: null,
+              percent: 100,
+            };
+          },
+        },
+      },
+    );
+
+    assert.equal(result.status, "error");
+    assert.equal(result.isError, true);
+    assert.equal(result.transport, null);
+    assert.equal(playwrightCalls, 0);
+    assert.match(result.errors[0]?.message ?? "", /10006/);
+  });
+
+  test("transport=playwright skips save RPC", async () => {
+    let playwrightCalls = 0;
+    const { calls, http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: 0,
+            result: { duration: 120, videoId: 9001 },
+          }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        throw new Error("save RPC must not run for transport=playwright");
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "401",
+        school_short_name: "SJTU",
+        transport: "playwright",
+        playback_rate: 1.5,
+      },
+      {
+        ...portsWith(async () => SESSION, http),
+        studyPlaywright: {
+          async studyUnitInBrowser(args) {
+            playwrightCalls += 1;
+            assert.equal(args.playback_rate, 1.5);
+            return {
+              kind: "completed",
+              learned_sec: 120,
+              duration_sec: 120,
+              page_count: null,
+              percent: 100,
+            };
+          },
+        },
+      },
+    );
+
+    assert.equal(result.status, "ok");
+    assert.equal(result.transport, "playwright");
+    assert.equal(playwrightCalls, 1);
+    assert.equal(
+      calls.some((call) => call.url.startsWith(SAVE_LEARN_RPC_URL)),
+      false,
+    );
+  });
+
+  test("playwright video quiz popup returns needs_quiz_assist without submit", async () => {
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: 0,
+            result: { duration: 60, videoId: 9001 },
+          }),
+        };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "401",
+        school_short_name: "SJTU",
+        transport: "playwright",
+      },
+      {
+        ...portsWith(async () => SESSION, http),
+        studyPlaywright: {
+          async studyUnitInBrowser() {
+            return {
+              kind: "needs_quiz_assist",
+              message:
+                "Video popup quiz detected (.u-questionItem). Do not silent-submit; use get_homework → AI → save_homework_answers, then retry study_unit.",
+              learned_sec: 12,
+              duration_sec: 60,
+            };
+          },
+        },
+      },
+    );
+
+    assert.equal(result.status, "needs_quiz_assist");
+    assert.equal(result.isError, true);
+    assert.equal(result.completed, false);
+    assert.equal(result.transport, "playwright");
+    assert.equal(result.learned_sec, 12);
+    assert.match(result.errors.map((e) => e.message).join(" "), /get_homework|save_homework/);
+  });
+
+  test("doc unit falls back to playwright on 并发限制", async () => {
+    let playwrightCalls = 0;
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: 0,
+            result: { textPages: 3 },
+          }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ code: -2, message: "并发限制" }),
+        };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "402",
+        school_short_name: "SJTU",
+        page_interval_sec: 0,
+        transport: "auto",
+      },
+      {
+        ...portsWith(async () => SESSION, http),
+        studyPlaywright: {
+          async studyUnitInBrowser(args) {
+            playwrightCalls += 1;
+            assert.equal(args.unit_type, "doc");
+            assert.equal(args.page_interval_sec, 0);
+            return {
+              kind: "completed",
+              learned_sec: null,
+              duration_sec: null,
+              page_count: 3,
+              percent: 100,
+            };
+          },
+        },
+      },
+    );
+
+    assert.equal(result.status, "ok");
+    assert.equal(result.transport, "playwright");
+    assert.equal(result.unit_type, "doc");
+    assert.equal(result.page_count, 3);
+    assert.equal(playwrightCalls, 1);
+  });
 });

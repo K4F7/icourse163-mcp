@@ -41,10 +41,11 @@ const LIST_TERM_UNITS_DESCRIPTION = [
 
 const STUDY_UNIT_DESCRIPTION = [
   "Advance learning progress for one video/audio/doc 课件 unit on 中国大学MOOC (align OCS watchMedia / readPPT).",
-  "Args: course_id, term_id, unit_id from list_courses / list_term_units; optional school_short_name; optional playback_rate (0.5–2, default 1); optional page_interval_sec (0–10, default 1) for doc/PPT page-turn pacing.",
-  "Uses official saveMocContentLearn RPC (no Playwright). Returns completed, learned_sec/duration_sec (video), page_count (doc), percent, transport=rpc.",
-  "Distinct failures: non_media_unit (quiz/other), auth_expired, page_structure_change. Video popup quizzes are NOT auto-submitted (use get_homework + save_homework_answers).",
-  "Detection risk: RPC progress can differ from real playback/page turns; use only on accounts you own. Do not pass cookies/passwords.",
+  "Args: course_id, term_id, unit_id from list_courses / list_term_units; optional school_short_name; optional playback_rate (0.5–2, default 1); optional page_interval_sec (0–10, default 1) for doc/PPT; optional transport (auto|rpc|playwright, default auto).",
+  "Default auto: try saveMocContentLearn RPC, then Playwright DOM playback when RPC is blocked (-10006 / 本地时间 / 并发限制). Explicit transport=playwright skips RPC save; transport=rpc is RPC-only.",
+  "Returns completed, learned_sec/duration_sec (video), page_count (doc), percent, transport=rpc|playwright. Needs system Chrome (see docs/mcp.md).",
+  "Distinct failures: non_media_unit, auth_expired, page_structure_change, needs_quiz_assist (video popup — use get_homework → save_homework_answers; never silent-submit).",
+  "Detection risk: automation may be flagged; use only on accounts you own. Do not pass cookies/passwords.",
   "Log in with the CLI (`npm run login`); MCP never accepts passwords.",
 ].join(" ");
 
@@ -170,6 +171,12 @@ export function createIcourse163McpServer(ports?: Icourse163Ports): McpServer {
           .number()
           .optional()
           .describe("Doc/PPT page-turn interval seconds 0–10 (default 1)"),
+        transport: z
+          .enum(["auto", "rpc", "playwright"])
+          .optional()
+          .describe(
+            "auto (default): RPC then Playwright on -10006-like blocks; rpc: RPC only; playwright: browser path only",
+          ),
       },
     },
     async (args) => {
@@ -181,6 +188,7 @@ export function createIcourse163McpServer(ports?: Icourse163Ports): McpServer {
           school_short_name: args.school_short_name,
           playback_rate: args.playback_rate,
           page_interval_sec: args.page_interval_sec,
+          transport: args.transport,
         },
         ports,
       );

@@ -149,19 +149,25 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 
 ## `study_unit`
 
-- Args: `course_id`, `term_id`, `unit_id` (from `list_courses` / `list_term_units`); optional `school_short_name`; optional `playback_rate` (0.5–2, default 1); optional `page_interval_sec` (0–10, default 1) for doc/PPT page-turn pacing (align OCS `readSpeed`).
-- Advances **video/audio** and **doc/PPT** (contentType 3/4) unit progress via official RPCs: resolve unit in `getLastLearnedMocTermDto`, optional `getLessonUnitLearnVo` (duration/videoId or `textPages`), then `saveMocContentLearn`. **No Playwright** in this implementation.
-- **Catalog duration**: video units often expose `durationInSeconds` (seconds). `study_unit` reads that field so progress can proceed without a successful learnVo.
-- **learnVo fallback**: if `getLessonUnitLearnVo` fails (e.g. `code=-1 系统异常`) but the catalog already has `contentId` + duration, save still proceeds. Missing both catalog duration and learnVo → `page_structure_change`.
-- Success: `status: "ok"`, `completed: true`, `learned_sec` / `duration_sec` / `percent` for video; `page_count` / `page_interval_sec` / `percent` for doc; `transport: "rpc"`.
+- Args: `course_id`, `term_id`, `unit_id` (from `list_courses` / `list_term_units`); optional `school_short_name`; optional `playback_rate` (0.5–2, default 1); optional `page_interval_sec` (0–10, default 1) for doc/PPT page-turn pacing (align OCS `readSpeed`); optional `transport` (`auto`|`rpc`|`playwright`, default `auto`).
+- **Transports**:
+  - `rpc`: resolve unit in `getLastLearnedMocTermDto`, optional `getLessonUnitLearnVo`, then `saveMocContentLearn` (same cookie/csrf/Referer pattern as other tools).
+  - `playwright`: open the learn unit URL in system Chrome (same channel/`ICOURSE163_CHROME` pattern as CLI login), inject the stored session cookie, then align OCS `watchMedia` / `readPPT` (DOM playback / PDF next-page clicks). Does **not** call `saveMocContentLearn`.
+  - `auto` (default): try RPC first; on `-10006` / `本地时间` / `并发限制` style save failures, fall back to Playwright.
+- **Catalog duration**: video units often expose `durationInSeconds` (seconds). `study_unit` reads that field so the RPC path can proceed without a successful learnVo.
+- **learnVo fallback (RPC)**: if `getLessonUnitLearnVo` fails (e.g. `code=-1 系统异常`) but the catalog already has `contentId` + duration, RPC save still proceeds. Missing both catalog duration and learnVo → `page_structure_change` (use `transport=playwright` to try the browser path anyway).
+- Success: `status: "ok"`, `completed: true`, `learned_sec` / `duration_sec` / `percent` for video; `page_count` / `page_interval_sec` / `percent` for doc; `transport: "rpc"` or `"playwright"`.
 - Distinct failures (`isError`):
   - `non_media_unit` — unit is quiz/other (not video/audio/doc)
   - `auth_expired` — missing/expired session
-  - `page_structure_change` — unit missing from catalog, or learnVo/save response unparseable when catalog also lacks duration/pages
-  - `error` — including `saveMocContentLearn` business failures (see API blocker below)
-- **API blocker (`saveMocContentLearn` `-10006`)**: live calls may return `code=-2` with message `请检查本地时间是否和北京时间一致-10006` (sometimes `并发限制`). Observed 2026-09-21 on a non-school kaopei course with a valid logged-in session while box clock (Asia/Shanghai) matched the site `Date` header within ~0.2s. Tried and **did not** clear it: `edu-script-token` header, browser-like fetch headers, `clientTime` form field (API rejects unknown param), alternate DTO shapes (ms duration, partial progress, termId/courseId extras, doc `pageNum`). OCS `icourse.ts` advances media via Playwright DOM playback (`watchMedia` / PDF page clicks), **not** this RPC — so there is no in-repo safe signature/crypto path to copy. Until the platform accepts anonymous/RPC save again (or a documented signed payload exists), unit tests mock a successful save; live `study_unit` may still surface `-10006` as `status: "error"`.
-- **Video popup quizzes**: not auto-answered or silently submitted; use later quiz tools (read → AI → save).
-- **Limits / detection risk**: RPC progress reports can differ from real playback timing or page-turn traffic; platforms may flag this. Use only on accounts you own. Do not pass cookies/passwords. `playback_rate` / `page_interval_sec` are recorded on the result; the RPC path does not actually stream media or drive a PDF viewer.
+  - `page_structure_change` — unit missing from catalog, or learnVo/save/DOM structure unparseable
+  - `needs_quiz_assist` — Playwright saw a video popup quiz (`.u-questionItem`); **never silent-submit**. Use `get_homework` → AI → `save_homework_answers`, then retry `study_unit`.
+  - `error` — including RPC business failures when `transport=rpc`, or Playwright/Chrome failures
+- **API blocker (`saveMocContentLearn` `-10006`)**: live RPC may return `code=-2` with `请检查本地时间是否和北京时间一致-10006` (sometimes `并发限制`). OCS advances media via Playwright DOM, not this RPC. With default `transport=auto`, `study_unit` falls back to Playwright when this happens.
+- **Live smoke (2026-09-21, non-school kaopei `1473617163` / unit `1303386815`)**: Playwright path launches system Chrome and injects the CLI session cookie; cold/hash deep-links often show「该课时数据不存在」and no `<video>` (reproducible). The runner warms `/learn/...` then opens 课件 and retries the unit URL/tree click. Further site/navigation timeouts are also possible. Treat as a known, documented blocker until SPA routing is fully mapped; RPC remains available when `-10006` is absent.
+- **Chrome dependency (Playwright path)**: needs Google Chrome / Chromium (`playwright-core` `channel: "chrome"`, or `ICOURSE163_CHROME`). Headless when no usable display unless `ICOURSE163_STUDY_HEADED=1`. Long media seeks near the end by default (`seek_near_end`) so automation can finish; set seek off only in custom runners.
+- **Video popup quizzes**: not auto-answered or silently submitted.
+- **Limits / detection risk**: both RPC progress reports and automated DOM playback/page-turns may be flagged. Use only on accounts you own. Do not pass cookies/passwords. Login remains CLI-only (`npm run login`); MCP never accepts passwords.
 - Never pass accounts or cookies.
 
 ## `get_homework`
