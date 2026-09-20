@@ -6,7 +6,10 @@ export type Icourse163HttpRequest = {
   url: string;
   cookie: string;
   method?: "GET" | "POST";
+  /** application/x-www-form-urlencoded body (mutually exclusive with json). */
   form?: Record<string, string>;
+  /** application/json body (mutually exclusive with form). */
+  json?: unknown;
   headers?: Record<string, string>;
 };
 

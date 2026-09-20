@@ -1,6 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+import {
+  getHomework,
+  saveHomeworkAnswers,
+  submitHomework,
+} from "./homework";
 import { listCourses } from "./list-courses";
 import { listTermUnits } from "./list-term-units";
 import { listTodos } from "./list-todos";
@@ -34,15 +39,46 @@ const LIST_TERM_UNITS_DESCRIPTION = [
   "Log in with the CLI (`npm run login`); MCP never accepts passwords.",
 ].join(" ");
 
-
 const STUDY_UNIT_DESCRIPTION = [
   "Advance learning progress for one video/audio/doc 课件 unit on 中国大学MOOC (align OCS watchMedia / readPPT).",
   "Args: course_id, term_id, unit_id from list_courses / list_term_units; optional school_short_name; optional playback_rate (0.5–2, default 1); optional page_interval_sec (0–10, default 1) for doc/PPT page-turn pacing.",
   "Uses official saveMocContentLearn RPC (no Playwright). Returns completed, learned_sec/duration_sec (video), page_count (doc), percent, transport=rpc.",
-  "Distinct failures: non_media_unit (quiz/other), auth_expired, page_structure_change. Video popup quizzes are NOT auto-submitted (see later quiz tools).",
+  "Distinct failures: non_media_unit (quiz/other), auth_expired, page_structure_change. Video popup quizzes are NOT auto-submitted (use get_homework + save_homework_answers).",
   "Detection risk: RPC progress can differ from real playback/page turns; use only on accounts you own. Do not pass cookies/passwords.",
   "Log in with the CLI (`npm run login`); MCP never accepts passwords.",
 ].join(" ");
+
+const GET_HOMEWORK_DESCRIPTION = [
+  "Read structured questions (stem + options) for one list_todos homework/quiz item on 中国大学MOOC.",
+  "Args: todo_id (course_id:term_id:quiz|unit|exam:content_id from list_todos); optional paper_type (quiz|homework); optional school_short_name.",
+  "Pipeline: get_homework (read) → AI fills → save_homework_answers REQUIRED (draft, preview=true) → optional user review → submit_homework ONLY after explicit user confirmation.",
+  "Quizzes (in-class / video popup style todos) reuse this same read path. Exam: read is allowed; never auto-submit (submit_homework refuses exam).",
+  "Uses mocQuizRpcBean.getOpenQuizPaperDto / getOpenHomeworkPaperDto RPC (mockable). No cookies/passwords in args.",
+].join(" ");
+
+const SAVE_HOMEWORK_DESCRIPTION = [
+  "Draft-save answers for a homework/quiz todo. REQUIRED after AI fills answers. Always preview=true — NEVER formally submits.",
+  "Args: todo_id; answers[{question_id, option_ids?, text?}]; optional paper_type; optional school_short_name.",
+  "Refuse any smuggled submit/preview=false. Formal submit is a separate submit_homework tool after user confirmation.",
+  "Exam drafts are allowed via save; exam formal submit is out of scope. No cookies/passwords.",
+].join(" ");
+
+const SUBMIT_HOMEWORK_DESCRIPTION = [
+  "Formally submit answers for a homework/quiz todo. Explicit opt-in ONLY — call after the user confirms.",
+  "Default workflow must use save_homework_answers (draft) first; do not submit without user confirmation.",
+  "Args: todo_id; answers[{question_id, option_ids?, text?}]; optional paper_type; optional school_short_name.",
+  "Posts mocQuizRpcBean.submitAnswers with preview=false. Refuses exam source todo_ids (考试代交不做).",
+  "No cookies/passwords.",
+].join(" ");
+
+const answerItemSchema = z.object({
+  question_id: z.string().describe("Question id from get_homework"),
+  option_ids: z
+    .array(z.string())
+    .optional()
+    .describe("Selected option id(s) for objective questions"),
+  text: z.string().optional().describe("Free-text answer for subjective questions"),
+});
 
 export function createIcourse163McpServer(ports?: Icourse163Ports): McpServer {
   const server = new McpServer({
@@ -113,7 +149,6 @@ export function createIcourse163McpServer(ports?: Icourse163Ports): McpServer {
     },
   );
 
-
   server.registerTool(
     "study_unit",
     {
@@ -131,6 +166,10 @@ export function createIcourse163McpServer(ports?: Icourse163Ports): McpServer {
           .number()
           .optional()
           .describe("Playback rate 0.5–2 (default 1); recorded with RPC progress"),
+        page_interval_sec: z
+          .number()
+          .optional()
+          .describe("Doc/PPT page-turn interval seconds 0–10 (default 1)"),
       },
     },
     async (args) => {
@@ -141,6 +180,103 @@ export function createIcourse163McpServer(ports?: Icourse163Ports): McpServer {
           unit_id: args.unit_id,
           school_short_name: args.school_short_name,
           playback_rate: args.playback_rate,
+          page_interval_sec: args.page_interval_sec,
+        },
+        ports,
+      );
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        structuredContent: { ...result },
+        isError: result.isError,
+      };
+    },
+  );
+
+  server.registerTool(
+    "get_homework",
+    {
+      title: "Get homework/quiz questions",
+      description: GET_HOMEWORK_DESCRIPTION,
+      inputSchema: {
+        todo_id: z
+          .string()
+          .describe("list_todos id: course_id:term_id:quiz|unit|exam:content_id"),
+        paper_type: z
+          .enum(["quiz", "homework"])
+          .optional()
+          .describe("Force quiz vs homework paper RPC (default quiz)"),
+        school_short_name: z
+          .string()
+          .optional()
+          .describe("Optional school shortName for learn Referer"),
+      },
+    },
+    async (args) => {
+      const result = await getHomework(
+        {
+          todo_id: args.todo_id,
+          paper_type: args.paper_type,
+          school_short_name: args.school_short_name,
+        },
+        ports,
+      );
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        structuredContent: { ...result },
+        isError: result.isError,
+      };
+    },
+  );
+
+  server.registerTool(
+    "save_homework_answers",
+    {
+      title: "Save homework/quiz draft answers",
+      description: SAVE_HOMEWORK_DESCRIPTION,
+      inputSchema: {
+        todo_id: z.string().describe("list_todos id"),
+        answers: z.array(answerItemSchema).describe("Answers keyed by question_id"),
+        paper_type: z.enum(["quiz", "homework"]).optional(),
+        school_short_name: z.string().optional(),
+      },
+    },
+    async (args) => {
+      const result = await saveHomeworkAnswers(
+        {
+          todo_id: args.todo_id,
+          answers: args.answers,
+          paper_type: args.paper_type,
+          school_short_name: args.school_short_name,
+        },
+        ports,
+      );
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        structuredContent: { ...result },
+        isError: result.isError,
+      };
+    },
+  );
+
+  server.registerTool(
+    "submit_homework",
+    {
+      title: "Submit homework/quiz (explicit)",
+      description: SUBMIT_HOMEWORK_DESCRIPTION,
+      inputSchema: {
+        todo_id: z.string().describe("list_todos id (non-exam)"),
+        answers: z.array(answerItemSchema).describe("Answers keyed by question_id"),
+        paper_type: z.enum(["quiz", "homework"]).optional(),
+        school_short_name: z.string().optional(),
+      },
+    },
+    async (args) => {
+      const result = await submitHomework(
+        {
+          todo_id: args.todo_id,
+          answers: args.answers,
+          paper_type: args.paper_type,
+          school_short_name: args.school_short_name,
         },
         ports,
       );

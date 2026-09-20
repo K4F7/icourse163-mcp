@@ -2,7 +2,7 @@
 
 本仓库根目录就是给 Grok Bot / Cursor 用的本机 stdio MCP。体验对齐 [K4F7/chaoxing-mcp](https://github.com/K4F7/chaoxing-mcp) / [K4F7/pu-mcp](https://github.com/K4F7/pu-mcp)：一个进程、stdio、凭据不进工具参数。
 
-工具目前只有 `list_todos`。登录只走 CLI，见 [docs/login.md](login.md)。MCP 从不接收或返回 cookie / 密码。
+工具含 `list_todos`、`list_courses`、`list_term_units`、`study_unit`、`get_homework`、`save_homework_answers`、`submit_homework`。登录只走 CLI，见 [docs/login.md](login.md)。MCP 从不接收或返回 cookie / 密码。
 
 产品目标对齐 OCS 学习自动化（自动看课、测验/作业辅助；**考试代交不做**），详见仓库根 [README](../README.md)。答卷流水线：`read` → AI 填答 → **`save` 必调（草稿）** → 用户确认后才显式 `submit`（默认不交）。实现可用 RPC 或 DOM/Playwright（或混合），由后续 issue 细化。
 
@@ -148,3 +148,23 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 - **Limits / detection risk**: RPC progress reports can differ from real playback timing or page-turn traffic; platforms may flag this. Use only on accounts you own. Do not pass cookies/passwords. `playback_rate` / `page_interval_sec` are recorded on the result; the RPC path does not actually stream media or drive a PDF viewer.
 - Never pass accounts or cookies.
 
+## `get_homework`
+
+- 入参：`todo_id`（来自 `list_todos`，格式 `course_id:term_id:quiz|unit|exam:content_id`）；可选 `paper_type`（`quiz`|`homework`，默认 `quiz`）；可选 `school_short_name`。
+- 返回结构化题目：`stem_text`、选项 `options[]`、`type` / `type_label`、`supports_save`。`draft_only: true` 提醒后续必须草稿保存。
+- RPC：`mocQuizRpcBean.getOpenQuizPaperDto` / `getOpenHomeworkPaperDto`（可 mock）。测验 / 随堂 / 视频弹窗题复用同一读题路径。
+- **流水线**：`get_homework`（读题）→ AI 填答 → **`save_homework_answers` 必调（草稿）** → 用户确认后才显式 `submit_homework`。默认不交。
+- 考试：可读题；正式提交见 `submit_homework`（拒绝 exam）。不要传账号或 cookie。
+
+## `save_homework_answers`
+
+- **草稿保存（必调）**。内部调用 `mocQuizRpcBean.submitAnswers` 且 **强制 `preview: true`**，`submitted` 恒为 `false`。
+- 入参：`todo_id`；`answers[{ question_id, option_ids?, text? }]`；可选 `paper_type` / `school_short_name`。
+- 拒绝任何夹带的 `submit: true` 或 `preview: false`（防止从 save 误交）。
+- 正式提交必须另调 `submit_homework`，且仅在用户确认后。考试也可草稿保存，但不可正式代交。
+
+## `submit_homework`
+
+- **显式正式提交（opt-in）**。仅在用户确认后调用；默认工作流只用 `save_homework_answers`。
+- 内部 `submitAnswers` 且 **`preview: false`**。`source=exam` 的 `todo_id` 直接 `exam_out_of_scope`（考试代交不做）。
+- 入参同 save。不要传账号或 cookie。

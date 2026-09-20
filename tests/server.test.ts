@@ -27,7 +27,7 @@ describe("icourse163 MCP server", () => {
 
       const listed = await client.listTools();
       const names = listed.tools.map((tool) => tool.name).sort();
-      assert.deepEqual(names, ["list_courses", "list_term_units", "list_todos", "study_unit"]);
+      assert.deepEqual(names, ["get_homework", "list_courses", "list_term_units", "list_todos", "save_homework_answers", "study_unit", "submit_homework"]);
 
       const result = await client.callTool({ name: "list_todos", arguments: {} });
       assert.equal("isError" in result && result.isError, true);
@@ -132,6 +132,49 @@ describe("icourse163 MCP server", () => {
       assert.equal(studyPayload.status, "auth_expired");
       assert.equal(studyPayload.completed, false);
       assert.equal(JSON.stringify(studyPayload).includes("test-session"), false);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  test("get_homework / save_homework_answers auth_expired without session; no cookies in payload", async () => {
+    const server = createIcourse163McpServer({
+      credentials: { getCookie: async () => null },
+      http: {
+        async request() {
+          throw new Error("http should not run");
+        },
+      },
+    });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+      const got = await client.callTool({
+        name: "get_homework",
+        arguments: { todo_id: "1001:2001:quiz:301" },
+      });
+      assert.equal("isError" in got && got.isError, true);
+      const gotPayload = structuredPayload(got);
+      assert.equal(gotPayload.status, "auth_expired");
+      assert.equal(gotPayload.draft_only, true);
+      assert.equal(JSON.stringify(gotPayload).includes("test-session"), false);
+
+      const saved = await client.callTool({
+        name: "save_homework_answers",
+        arguments: {
+          todo_id: "1001:2001:quiz:301",
+          answers: [{ question_id: "11", option_ids: ["102"] }],
+        },
+      });
+      assert.equal("isError" in saved && saved.isError, true);
+      const savedPayload = structuredPayload(saved);
+      assert.equal(savedPayload.status, "auth_expired");
+      assert.equal(savedPayload.submitted, false);
+      assert.equal(savedPayload.preview, true);
     } finally {
       await client.close();
       await server.close();
