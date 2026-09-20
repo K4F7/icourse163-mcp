@@ -56,6 +56,11 @@ export type StudyPlaywrightArgs = {
   timeout_ms?: number;
 };
 
+export type NavStrategy = "tree_click" | "deeplink_fallback" | "warm_learn";
+
+/** School SPOC vs marketplace / non-school (e.g. kaopei). */
+export type CourseKind = "school" | "non_school";
+
 export type StudyPlaywrightOutcome =
   | {
       kind: "completed";
@@ -63,15 +68,25 @@ export type StudyPlaywrightOutcome =
       duration_sec: number | null;
       page_count: number | null;
       percent: number;
+      nav_strategy?: NavStrategy;
     }
   | {
       kind: "needs_quiz_assist";
       message: string;
       learned_sec: number | null;
       duration_sec: number | null;
+      nav_strategy?: NavStrategy;
     }
-  | { kind: "page_structure_change"; message: string }
-  | { kind: "error"; message: string };
+  | {
+      kind: "page_structure_change";
+      message: string;
+      nav_strategy?: NavStrategy | null;
+    }
+  | {
+      kind: "error";
+      message: string;
+      nav_strategy?: NavStrategy | null;
+    };
 
 export type StudyPlaywrightRunner = {
   studyUnitInBrowser(args: StudyPlaywrightArgs): Promise<StudyPlaywrightOutcome>;
@@ -115,6 +130,68 @@ export function cookieHeaderToPlaywrightCookies(header: string): Cookie[] {
   return cookies;
 }
 
+const MISSING_UNIT_SNIPPETS = [
+  "该课时数据不存在",
+  "该课时数据不存在",
+  "课时数据不存在",
+] as const;
+
+const COURSEWARE_TREE_SELECTOR = [
+  ".j-unitslist",
+  ".unitslist",
+  ".j-unitctBox",
+  ".unit-name",
+  "[class*=\"unitslist\"]",
+  "[data-cid]",
+  ".lsicon",
+  ".f-icon.lsicon",
+].join(", ");
+
+const MEDIA_OR_PDF_SELECTOR = `${MEDIA_SELECTOR}, ${PDF_READER_SELECTOR}`;
+
+const NON_SCHOOL_SHORT_NAMES = new Set(["", "kaopei"]);
+
+export function classifyCourseKind(schoolShortName: string): CourseKind {
+  return NON_SCHOOL_SHORT_NAMES.has(schoolShortName.trim().toLowerCase())
+    ? "non_school"
+    : "school";
+}
+
+export function buildLearnContentHash(
+  unitId: string,
+  contentId: string | null,
+): string {
+  const id = unitId.trim();
+  const cid = (contentId ?? unitId).trim();
+  return `#/learn/content?type=detail&id=${encodeURIComponent(id)}&cid=${encodeURIComponent(cid)}`;
+}
+
+export function textIndicatesMissingUnit(sample: string): boolean {
+  return MISSING_UNIT_SNIPPETS.some((snippet) => sample.includes(snippet));
+}
+
+/**
+ * Pure navigation decision for unit tests.
+ * Prefer tree_click; deeplink_fallback only when soft-hash produced media.
+ */
+export function chooseNavStrategy(input: {
+  treeClickSucceeded: boolean;
+  mediaVisible: boolean;
+  missingUnitVisible: boolean;
+  deeplinkMediaVisible: boolean;
+}): NavStrategy | null {
+  if (input.treeClickSucceeded && input.mediaVisible) {
+    return "tree_click";
+  }
+  if (input.deeplinkMediaVisible) {
+    return "deeplink_fallback";
+  }
+  if (input.treeClickSucceeded) {
+    return "tree_click";
+  }
+  return null;
+}
+
 export function createPlaywrightStudyRunner(): StudyPlaywrightRunner {
   return {
     async studyUnitInBrowser(args) {
@@ -149,27 +226,39 @@ export async function studyUnitWithPlaywright(
       term_id: args.term_id,
       school_short_name: args.school_short_name,
     });
-    const url = buildLearnUnitUrl(args);
 
-    // Warm the SPA shell first — cold hash deep-links often show「该课时数据不存在」.
-    await page.goto(learnBase, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
-    await dismissLearnDialogs(page);
-    await openCoursewareTab(page);
-    await dismissLearnDialogs(page);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
-    await dismissLearnDialogs(page);
-    await openCoursewareTab(page);
-    await tryClickUnitInTree(page, args.unit_id, args.unit_name ?? null);
-    await dismissLearnDialogs(page);
+    // OCS-aligned: warm learn → hydrate 课件 tree → click unit → wait media.
+    // Blind page.goto deep-link is fallback only (issue #30).
+    const nav = await navigateToUnitPlayer(page, {
+      learnBase,
+      unitId: args.unit_id,
+      unitName: args.unit_name ?? null,
+      contentId: args.content_id,
+    });
 
     if (args.unit_type === "doc") {
-      return await readPptInPage(page, args.page_interval_sec, args.content_type, timeoutMs);
+      const outcome = await readPptInPage(
+        page,
+        args.page_interval_sec,
+        args.content_type,
+        timeoutMs,
+      );
+      return attachNavStrategy(outcome, nav.strategy);
     }
-    return await watchMediaInPage(page, args.playback_rate, seekNearEnd, timeoutMs);
+    {
+      const outcome = await watchMediaInPage(
+        page,
+        args.playback_rate,
+        seekNearEnd,
+        timeoutMs,
+      );
+      return attachNavStrategy(outcome, nav.strategy);
+    }
   } catch (error) {
     return {
       kind: "error",
       message: describeChromeLaunchFailure(error),
+      nav_strategy: null,
     };
   } finally {
     await browser?.close().catch(() => undefined);
@@ -177,7 +266,7 @@ export async function studyUnitWithPlaywright(
 }
 
 async function dismissLearnDialogs(page: Page): Promise<void> {
-  for (const name of ["确定", "关闭", "我知道了", "知道了"]) {
+  for (const name of ["确定", "关闭", "我知道了", "知道了", "开始学习", "同意", "暂不"]) {
     try {
       const button = page.getByRole("button", { name }).first();
       if (await button.isVisible().catch(() => false)) {
@@ -195,6 +284,80 @@ async function dismissLearnDialogs(page: Page): Promise<void> {
       // ignore
     }
   }
+  // Ant Design modal mask often blocks 课件 tree clicks on first entry.
+  const modalClose = page.locator(".ant-modal-wrap .ant-modal-close, .ant-modal-wrap button.ant-modal-close").first();
+  if (await modalClose.isVisible().catch(() => false)) {
+    await modalClose.click({ timeout: 2000 }).catch(() => undefined);
+  }
+  const modalWrap = page.locator(".ant-modal-wrap").first();
+  if (await modalWrap.isVisible().catch(() => false)) {
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await modalWrap.waitFor({ state: "hidden", timeout: 3000 }).catch(() => undefined);
+  }
+}
+
+async function navigateToUnitPlayer(
+  page: Page,
+  input: {
+    learnBase: string;
+    unitId: string;
+    unitName: string | null;
+    contentId: string | null;
+  },
+): Promise<{ strategy: NavStrategy }> {
+  // commit is enough for first byte; SPA shell needs an explicit UI wait (domcontentloaded
+  // alone can hang or return an empty body under load).
+  await page.goto(input.learnBase, {
+    waitUntil: "commit",
+    timeout: NAV_TIMEOUT_MS,
+  });
+  await page
+    .getByText("课件", { exact: true })
+    .first()
+    .waitFor({ state: "visible", timeout: NAV_TIMEOUT_MS })
+    .catch(() => undefined);
+  await dismissLearnDialogs(page);
+  await openCoursewareTab(page);
+  await waitForCoursewareTree(page);
+  await dismissLearnDialogs(page);
+
+  const clicked = await clickUnitInTree(page, input.unitId, input.unitName);
+  await dismissLearnDialogs(page);
+
+  if (await waitForMediaOrPdf(page, 15_000)) {
+    return { strategy: "tree_click" };
+  }
+
+  const bodyText = await page.evaluate(
+    // new Function avoids tsx keepNames injecting __name into Playwright's serialized callback.
+    new Function(
+      "return (document.body && document.body.innerText) ? document.body.innerText : '';",
+    ) as () => string,
+  );
+  const missing = textIndicatesMissingUnit(bodyText);
+
+  // Soft in-SPA hash only after tree path failed — never cold page.goto deep-link.
+  if (!clicked || missing || !(await mediaOrPdfAttached(page))) {
+    await softHashDeeplink(page, input.unitId, input.contentId);
+    await dismissLearnDialogs(page);
+    if (await waitForMediaOrPdf(page, 20_000)) {
+      return { strategy: "deeplink_fallback" };
+    }
+    await clickUnitInTree(page, input.unitId, input.unitName);
+    await dismissLearnDialogs(page);
+    if (await waitForMediaOrPdf(page, 15_000)) {
+      return { strategy: "deeplink_fallback" };
+    }
+  }
+
+  return { strategy: clicked ? "tree_click" : "warm_learn" };
+}
+
+function attachNavStrategy(
+  outcome: StudyPlaywrightOutcome,
+  strategy: NavStrategy,
+): StudyPlaywrightOutcome {
+  return { ...outcome, nav_strategy: strategy };
 }
 
 async function openCoursewareTab(page: Page): Promise<void> {
@@ -206,7 +369,7 @@ async function openCoursewareTab(page: Page): Promise<void> {
     try {
       if (await locator.isVisible().catch(() => false)) {
         await locator.click({ timeout: 3000 });
-        await sleepMs(1500);
+        await waitForCoursewareTree(page).catch(() => undefined);
         return;
       }
     } catch {
@@ -215,27 +378,111 @@ async function openCoursewareTab(page: Page): Promise<void> {
   }
 }
 
-async function tryClickUnitInTree(
+async function waitForCoursewareTree(page: Page): Promise<void> {
+  await page
+    .waitForSelector(COURSEWARE_TREE_SELECTOR, {
+      state: "attached",
+      timeout: 20_000,
+    })
+    .catch(() => undefined);
+}
+
+async function clickUnitInTree(
   page: Page,
   unitId: string,
   unitName: string | null,
-): Promise<void> {
-  const byAttr = page.locator(`[data-id="${unitId}"], [data-unit-id="${unitId}"]`).first();
+): Promise<boolean> {
+  await dismissLearnDialogs(page);
+
+  const byAttr = page
+    .locator(
+      `[data-cid="${unitId}"], [data-id="${unitId}"], [data-unit-id="${unitId}"], a[href*="id=${unitId}"]`,
+    )
+    .first();
   if ((await byAttr.count().catch(() => 0)) > 0) {
-    await byAttr.click({ timeout: 3000 }).catch(() => undefined);
-    await sleepMs(2000);
-    return;
+    await byAttr
+      .click({ timeout: 5000, force: true })
+      .catch(() => undefined);
+    await page
+      .waitForLoadState("domcontentloaded", { timeout: 5000 })
+      .catch(() => undefined);
+    return true;
   }
+
   if (unitName != null && unitName.trim() !== "") {
+    const trimmed = unitName.trim();
+    // New 课件 UI often puts the title on [data-cid] / .lsicon rather than .unit-name.
+    for (const loc of [
+      page.locator(`[data-cid][title*="${trimmed}"]`).first(),
+      page.locator(".j-unitslist .unit-name", { hasText: trimmed }).first(),
+      page.locator(".unitslist .unit-name", { hasText: trimmed }).first(),
+      page.locator(".unit-name", { hasText: trimmed }).first(),
+      page.locator(".lsicon", { hasText: trimmed }).first(),
+    ]) {
+      try {
+        if (
+          (await loc.count()) > 0 &&
+          (await loc.isVisible().catch(() => false))
+        ) {
+          await loc.click({ timeout: 5000, force: true });
+          await page
+            .waitForLoadState("domcontentloaded", { timeout: 5000 })
+            .catch(() => undefined);
+          return true;
+        }
+      } catch {
+        // try next
+      }
+    }
     try {
-      const byName = page.getByText(unitName.trim(), { exact: false }).first();
+      const byName = page.getByText(trimmed, { exact: false }).first();
       if (await byName.isVisible().catch(() => false)) {
-        await byName.click({ timeout: 5000 });
-        await sleepMs(2000);
+        await byName.click({ timeout: 5000, force: true });
+        await page
+          .waitForLoadState("domcontentloaded", { timeout: 5000 })
+          .catch(() => undefined);
+        return true;
       }
     } catch {
-      // unit may already be selected via deep-link
+      // not in tree
     }
+  }
+  return false;
+}
+
+async function softHashDeeplink(
+  page: Page,
+  unitId: string,
+  contentId: string | null,
+): Promise<void> {
+  const hash = buildLearnContentHash(unitId, contentId);
+  await page.evaluate(
+    new Function("nextHash", "globalThis.location.hash = nextHash") as (
+      nextHash: string,
+    ) => void,
+    hash,
+  );
+  await page
+    .waitForLoadState("domcontentloaded", { timeout: 8000 })
+    .catch(() => undefined);
+}
+
+async function mediaOrPdfAttached(page: Page): Promise<boolean> {
+  return (await page.locator(MEDIA_OR_PDF_SELECTOR).count().catch(() => 0)) > 0;
+}
+
+async function waitForMediaOrPdf(
+  page: Page,
+  timeoutMs: number,
+): Promise<boolean> {
+  try {
+    await page.waitForSelector(MEDIA_OR_PDF_SELECTOR, {
+      state: "attached",
+      timeout: timeoutMs,
+    });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -272,39 +519,20 @@ async function watchMediaInPage(
     };
   }
 
-  await page.evaluate((rate) => {
-    const doc = (globalThis as unknown as { document: { querySelector: (s: string) => DomMedia | null } }).document;
-    const el = doc.querySelector("video, audio");
-    if (el == null) {
-      return;
-    }
-    el.muted = true;
-    el.playbackRate = rate;
-    void el.play().catch(() => undefined);
-  }, playbackRate);
+  await page.evaluate(
+    new Function(
+      "rate",
+      "var el = document.querySelector('video, audio'); if (!el) return; el.muted = true; el.playbackRate = rate; try { el.play(); } catch (e) {}",
+    ) as (rate: number) => void,
+    playbackRate,
+  );
 
   if (seekNearEnd) {
-    await page.evaluate(() => {
-      const doc = (globalThis as unknown as { document: { querySelector: (s: string) => DomMedia | null } }).document;
-      const el = doc.querySelector("video, audio");
-      if (el == null) {
-        return;
-      }
-      const ready = () => {
-        if (Number.isFinite(el.duration) && el.duration > 5) {
-          el.currentTime = Math.max(0, el.duration - 3);
-          void el.play().catch(() => undefined);
-        }
-      };
-      if (Number.isFinite(el.duration) && el.duration > 0) {
-        ready();
-      } else {
-        el.addEventListener("loadedmetadata", ready, { once: true });
-      }
-    });
+    await seekMediaNearEnd(page);
   }
 
   const deadline = Date.now() + timeoutMs;
+  let lastSeekAt = 0;
   while (Date.now() < deadline) {
     if (await isQuizVisible(page)) {
       const progress = await readMediaProgress(page);
@@ -318,7 +546,12 @@ async function watchMediaInPage(
     }
 
     const progress = await readMediaProgress(page);
-    if (progress.ended) {
+    const nearEnd =
+      progress.duration != null &&
+      progress.current != null &&
+      progress.duration > 0 &&
+      progress.current >= Math.max(0, progress.duration - 2);
+    if (progress.ended || nearEnd) {
       const duration = progress.duration ?? progress.current;
       return {
         kind: "completed",
@@ -327,6 +560,11 @@ async function watchMediaInPage(
         page_count: null,
         percent: 100,
       };
+    }
+    // Re-assert seek periodically — some players reset currentTime after UI init.
+    if (seekNearEnd && Date.now() - lastSeekAt > 4000) {
+      await seekMediaNearEnd(page);
+      lastSeekAt = Date.now();
     }
 
     await sleepMs(500);
@@ -447,6 +685,35 @@ async function isQuizVisible(page: Page): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+
+async function seekMediaNearEnd(page: Page): Promise<void> {
+  await page.evaluate(
+    new Function(
+      "var el = document.querySelector('video, audio');" +
+        "if (!el) {" +
+        "  var iframes = document.querySelectorAll('iframe');" +
+        "  for (var i = 0; i < iframes.length; i++) {" +
+        "    try {" +
+        "      el = iframes[i].contentDocument && iframes[i].contentDocument.querySelector('video, audio');" +
+        "    } catch (e) {}" +
+        "    if (el) break;" +
+        "  }" +
+        "}" +
+        "if (!el) return;" +
+        "el.muted = true;" +
+        "try { el.play(); } catch (e) {}" +
+        "var jump = function () {" +
+        "  if (Number.isFinite(el.duration) && el.duration > 1) {" +
+        "    el.currentTime = Math.max(0, el.duration - 1.5);" +
+        "    try { el.play(); } catch (e2) {}" +
+        "  }" +
+        "};" +
+        "if (Number.isFinite(el.duration) && el.duration > 0) { jump(); }" +
+        "else { el.addEventListener('loadedmetadata', jump, { once: true }); }",
+    ) as () => void,
+  );
 }
 
 async function readMediaProgress(page: Page): Promise<{

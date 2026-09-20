@@ -156,7 +156,7 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
   - `auto` (default): try RPC first; on `-10006` / `本地时间` / `并发限制` style save failures, fall back to Playwright.
 - **Catalog duration**: video units often expose `durationInSeconds` (seconds). `study_unit` reads that field so the RPC path can proceed without a successful learnVo.
 - **learnVo fallback (RPC)**: if `getLessonUnitLearnVo` fails (e.g. `code=-1 系统异常`) but the catalog already has `contentId` + duration, RPC save still proceeds. Missing both catalog duration and learnVo → `page_structure_change` (use `transport=playwright` to try the browser path anyway).
-- Success: `status: "ok"`, `completed: true`, `learned_sec` / `duration_sec` / `percent` for video; `page_count` / `page_interval_sec` / `percent` for doc; `transport: "rpc"` or `"playwright"`.
+- Success: `status: "ok"`, `completed: true`, `learned_sec` / `duration_sec` / `percent` for video; `page_count` / `page_interval_sec` / `percent` for doc; `transport: "rpc"` or `"playwright"`; Playwright results also include `nav_strategy` and `course_kind`.
 - Distinct failures (`isError`):
   - `non_media_unit` — unit is quiz/other (not video/audio/doc)
   - `auth_expired` — missing/expired session
@@ -164,7 +164,8 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
   - `needs_quiz_assist` — Playwright saw a video popup quiz (`.u-questionItem`); **never silent-submit**. Use `get_homework` → AI → `save_homework_answers`, then retry `study_unit`.
   - `error` — including RPC business failures when `transport=rpc`, or Playwright/Chrome failures
 - **API blocker (`saveMocContentLearn` `-10006`)**: live RPC may return `code=-2` with `请检查本地时间是否和北京时间一致-10006` (sometimes `并发限制`). OCS advances media via Playwright DOM, not this RPC. With default `transport=auto`, `study_unit` falls back to Playwright when this happens.
-- **Live smoke (2026-09-21, non-school kaopei `1473617163` / unit `1303386815`)**: Playwright path launches system Chrome and injects the CLI session cookie; cold/hash deep-links often show「该课时数据不存在」and no `<video>` (reproducible). The runner warms `/learn/...` then opens 课件 and retries the unit URL/tree click. Further site/navigation timeouts are also possible. Treat as a known, documented blocker until SPA routing is fully mapped; RPC remains available when `-10006` is absent.
+- **Live smoke (2026-09-21 CST+8, non-school kaopei `1473617163` / unit `1303386815`)**: **PASS** via Playwright. Navigation is OCS-aligned: warm `/learn/...` → wait for 课件 → dismiss `.ant-modal-wrap` → click `[data-cid=unitId]` in the 课件 outline → seek near end → wait for `ended`/near-end. Result: `completed=true`, `transport=playwright`, `nav_strategy=tree_click`, `course_kind=non_school`, `percent=100` (~8369s duration). Blind hash deep-links remain **fallback only**. Popup quizzes still stop with `needs_quiz_assist` (never silent-submit).
+
 - **Chrome dependency (Playwright path)**: needs Google Chrome / Chromium (`playwright-core` `channel: "chrome"`, or `ICOURSE163_CHROME`). Headless when no usable display unless `ICOURSE163_STUDY_HEADED=1`. Long media seeks near the end by default (`seek_near_end`) so automation can finish; set seek off only in custom runners.
 - **Video popup quizzes**: not auto-answered or silently submitted.
 - **Limits / detection risk**: both RPC progress reports and automated DOM playback/page-turns may be flagged. Use only on accounts you own. Do not pass cookies/passwords. Login remains CLI-only (`npm run login`); MCP never accepts passwords.

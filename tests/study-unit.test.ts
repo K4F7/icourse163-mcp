@@ -645,6 +645,7 @@ describe("studyUnit Playwright fallback", () => {
             assert.ok(args.cookie.includes("NTESSTUDYSI"));
             return {
               kind: "completed",
+              nav_strategy: "tree_click",
               learned_sec: 120,
               duration_sec: 120,
               page_count: null,
@@ -658,6 +659,8 @@ describe("studyUnit Playwright fallback", () => {
     assert.equal(result.status, "ok");
     assert.equal(result.isError, false);
     assert.equal(result.transport, "playwright");
+    assert.ok(result.course_kind === "school" || result.course_kind === "non_school");
+    assert.equal(result.nav_strategy, "tree_click");
     assert.equal(result.completed, true);
     assert.equal(playwrightCalls, 1);
     assert.ok(calls.some((call) => call.url.startsWith(SAVE_LEARN_RPC_URL)));
