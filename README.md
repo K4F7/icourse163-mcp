@@ -6,7 +6,7 @@
 
 - 本地进程，stdio；不托管远端会话
 - 登录只走 CLI / 环境变量；MCP 工具不收密码
-- 工具：`list_todos`（仍开放待办）、`list_courses`（已选课）、`list_term_units`（课件目录 lesson→unit）、`study_unit`（视频/音频进度推进）
+- 工具：`list_todos`（仍开放待办）、`list_courses`（已选课）、`list_term_units`（课件目录 lesson→unit）、`study_unit`（视频/音频/文档 PPT 进度推进）
 
 产品目标尽量对齐 [OCS 中国大学MOOC 脚本](https://github.com/ocsjs/ocsjs/blob/4.0/packages/scripts/src/projects/icourse.ts) 的学习自动化；**明确不做考试代交**。
 
@@ -35,13 +35,13 @@ npm run login --silent -- --check
 - CLI 登录（cookie 文件 / Playwright 账密；见 [docs/login.md](docs/login.md)）
 - MCP 工具 `list_todos`：列出仍开放的作业 / 测验 / 考试待办
 - MCP 工具 `list_courses` / `list_term_units`：已选课与课件目录
-- MCP 工具 `study_unit`：对视频单元 RPC 推进学习进度（见 docs/mcp.md 限制与检测风险）
+- MCP 工具 `study_unit`：对视频/音频/文档(PPT)单元 RPC 推进学习进度（见 docs/mcp.md 限制与检测风险）
 
 ## 目标能力（后续 issue）
 
 对齐 OCS 的学习自动化范围。实现路径可选用本仓既有 **RPC** 风格、参考 OCS 的 **DOM/Playwright**，或二者混合——由后续 issue 细化：
 
-- **自动看课**：视频/音频已由 `study_unit` 覆盖（RPC）；PPT/文档见后续 issue
+- **自动看课**：视频/音频/文档(PPT)已由 `study_unit` 覆盖（RPC）；测验/作业见后续 issue
 - **测验 / 作业辅助**（工具语义与后续 #17 对齐）：固定流水线
 
   `read`（结构化题干 + 选项）→ AI 填答 → **`save` 必调（保存草稿）** →（可选）用户检查确认后才显式 `submit`

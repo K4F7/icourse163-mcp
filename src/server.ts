@@ -36,11 +36,11 @@ const LIST_TERM_UNITS_DESCRIPTION = [
 
 
 const STUDY_UNIT_DESCRIPTION = [
-  "Advance learning progress for one video/audio 课件 unit on 中国大学MOOC (align OCS watchMedia).",
-  "Args: course_id, term_id, unit_id from list_courses / list_term_units; optional school_short_name; optional playback_rate (0.5–2, default 1).",
-  "Uses official saveMocContentLearn RPC (no Playwright). Returns completed, learned_sec, duration_sec, percent, transport=rpc.",
-  "Distinct failures: non_media_unit, auth_expired, page_structure_change. Video popup quizzes are NOT auto-submitted (see later quiz tools).",
-  "Detection risk: RPC progress can differ from real playback; use only on accounts you own. Do not pass cookies/passwords.",
+  "Advance learning progress for one video/audio/doc 课件 unit on 中国大学MOOC (align OCS watchMedia / readPPT).",
+  "Args: course_id, term_id, unit_id from list_courses / list_term_units; optional school_short_name; optional playback_rate (0.5–2, default 1); optional page_interval_sec (0–10, default 1) for doc/PPT page-turn pacing.",
+  "Uses official saveMocContentLearn RPC (no Playwright). Returns completed, learned_sec/duration_sec (video), page_count (doc), percent, transport=rpc.",
+  "Distinct failures: non_media_unit (quiz/other), auth_expired, page_structure_change. Video popup quizzes are NOT auto-submitted (see later quiz tools).",
+  "Detection risk: RPC progress can differ from real playback/page turns; use only on accounts you own. Do not pass cookies/passwords.",
   "Log in with the CLI (`npm run login`); MCP never accepts passwords.",
 ].join(" ");
 
@@ -117,12 +117,12 @@ export function createIcourse163McpServer(ports?: Icourse163Ports): McpServer {
   server.registerTool(
     "study_unit",
     {
-      title: "Study video/audio unit",
+      title: "Study video/audio/doc unit",
       description: STUDY_UNIT_DESCRIPTION,
       inputSchema: {
         course_id: z.string().describe("Course id from list_courses"),
         term_id: z.string().describe("Term id from list_courses"),
-        unit_id: z.string().describe("Video/audio unit id from list_term_units"),
+        unit_id: z.string().describe("Video/audio/doc unit id from list_term_units"),
         school_short_name: z
           .string()
           .optional()
