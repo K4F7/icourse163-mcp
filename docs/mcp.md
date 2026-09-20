@@ -137,13 +137,14 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 
 ## `study_unit`
 
-- Args: `course_id`, `term_id`, `unit_id` (from `list_courses` / `list_term_units`); optional `school_short_name`; optional `playback_rate` (0.5–2, default 1).
-- Advances **video** unit progress via official RPCs: resolve unit in `getLastLearnedMocTermDto`, optional `getLessonUnitLearnVo` for duration/videoId, then `saveMocContentLearn`. **No Playwright** in this implementation.
-- Success: `status: "ok"`, `completed: true`, `learned_sec` / `duration_sec` / `percent` when known, `playback_rate`, `transport: "rpc"`.
+- Args: `course_id`, `term_id`, `unit_id` (from `list_courses` / `list_term_units`); optional `school_short_name`; optional `playback_rate` (0.5–2, default 1); optional `page_interval_sec` (0–10, default 1) for doc/PPT page-turn pacing (align OCS `readSpeed`).
+- Advances **video/audio** and **doc/PPT** (contentType 3/4) unit progress via official RPCs: resolve unit in `getLastLearnedMocTermDto`, optional `getLessonUnitLearnVo` (duration/videoId or `textPages`), then `saveMocContentLearn`. **No Playwright** in this implementation.
+- Success: `status: "ok"`, `completed: true`, `learned_sec` / `duration_sec` / `percent` for video; `page_count` / `page_interval_sec` / `percent` for doc; `transport: "rpc"`.
 - Distinct failures (`isError`):
-  - `non_media_unit` — unit is not video/audio (doc/quiz/other)
+  - `non_media_unit` — unit is quiz/other (not video/audio/doc)
   - `auth_expired` — missing/expired session
   - `page_structure_change` — unit missing from catalog, or learnVo/save response unparseable
 - **Video popup quizzes**: not auto-answered or silently submitted; use later quiz tools (read → AI → save).
-- **Limits / detection risk**: RPC progress reports can differ from real playback timing/traffic; platforms may flag this. Use only on accounts you own. Do not pass cookies/passwords. `playback_rate` is recorded on the result; the RPC path does not actually stream media.
+- **Limits / detection risk**: RPC progress reports can differ from real playback timing or page-turn traffic; platforms may flag this. Use only on accounts you own. Do not pass cookies/passwords. `playback_rate` / `page_interval_sec` are recorded on the result; the RPC path does not actually stream media or drive a PDF viewer.
 - Never pass accounts or cookies.
+

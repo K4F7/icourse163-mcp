@@ -26,6 +26,9 @@ const ORIGIN = "https://www.icourse163.org";
 const DEFAULT_PLAYBACK_RATE = 1;
 const MIN_PLAYBACK_RATE = 0.5;
 const MAX_PLAYBACK_RATE = 2;
+const DEFAULT_PAGE_INTERVAL_SEC = 1;
+const MIN_PAGE_INTERVAL_SEC = 0;
+const MAX_PAGE_INTERVAL_SEC = 10;
 
 export type StudyUnitStatus =
   | "ok"
@@ -40,6 +43,8 @@ export type StudyUnitArgs = {
   unit_id: string;
   school_short_name?: string;
   playback_rate?: number;
+  /** Seconds between simulated PPT page turns (OCS readSpeed). Default 1; 0 skips delay. */
+  page_interval_sec?: number;
 };
 
 export type StudyUnitResult = {
@@ -54,6 +59,8 @@ export type StudyUnitResult = {
   duration_sec: number | null;
   percent: number | null;
   playback_rate: number;
+  page_count: number | null;
+  page_interval_sec: number | null;
   transport: "rpc" | null;
   errors: ToolError[];
 };
@@ -80,11 +87,28 @@ export type VideoLearnDto = {
   };
 };
 
+export type DocLearnDto = {
+  unitId: number;
+  contentType: number;
+  finished: boolean;
+  pageNum: number;
+};
+
 export function clampPlaybackRate(value: number | undefined): number {
   if (value == null || !Number.isFinite(value)) {
     return DEFAULT_PLAYBACK_RATE;
   }
   return Math.min(MAX_PLAYBACK_RATE, Math.max(MIN_PLAYBACK_RATE, value));
+}
+
+export function clampPageIntervalSec(value: number | undefined): number {
+  if (value == null || !Number.isFinite(value)) {
+    return DEFAULT_PAGE_INTERVAL_SEC;
+  }
+  return Math.min(
+    MAX_PAGE_INTERVAL_SEC,
+    Math.max(MIN_PAGE_INTERVAL_SEC, value),
+  );
 }
 
 export function findUnitInMocTerm(
@@ -148,6 +172,20 @@ export function buildVideoLearnDto(input: {
       currentTime: duration,
       learnedTime: duration,
     },
+  };
+}
+
+export function buildDocLearnDto(input: {
+  unit_id: string;
+  content_type: number;
+  page_count: number;
+}): DocLearnDto {
+  const pageNum = Math.max(1, Math.floor(input.page_count));
+  return {
+    unitId: Number(input.unit_id),
+    contentType: input.content_type,
+    finished: true,
+    pageNum,
   };
 }
 
@@ -250,6 +288,21 @@ export async function studyUnit(
     };
   }
 
+  if (located.unit_type === "doc") {
+    return studyDocUnit({
+      base,
+      courseId,
+      termId,
+      unitId,
+      located,
+      course,
+      session,
+      ports,
+      playbackRate,
+      pageIntervalSec: clampPageIntervalSec(args.page_interval_sec),
+    });
+  }
+
   if (located.unit_type !== "video") {
     return {
       ...base,
@@ -259,7 +312,7 @@ export async function studyUnit(
       errors: [
         {
           where: "unit",
-          message: `Unit ${unitId} is type ${located.unit_type}, not video/audio media`,
+          message: `Unit ${unitId} is type ${located.unit_type}, not video/audio/doc media`,
         },
       ],
     };
@@ -275,6 +328,7 @@ export async function studyUnit(
     csrfKey: session.csrfKey,
     contentId: contentId ?? unitId,
     unitId,
+    contentType: 1,
     referer,
   });
   if (learnVo != null) {
@@ -308,87 +362,26 @@ export async function studyUnit(
     duration_sec: durationSec,
   });
 
-  let saveBody: string;
-  try {
-    const response = await ports.http.request({
-      url: `${SAVE_LEARN_RPC_URL}?csrfKey=${encodeURIComponent(session.csrfKey)}`,
-      cookie: session.cookie,
-      method: "POST",
-      form: { dto: JSON.stringify(dto) },
-      headers: {
-        origin: ORIGIN,
-        referer,
-      },
-    });
-    if (response.statusCode === 401 || response.statusCode === 403) {
-      return {
-        ...base,
-        isError: true,
-        status: "auth_expired",
-        unit_type: "video",
-        errors: [
-          {
-            where: "credentials",
-            message:
-              "icourse163 session is missing or expired (auth_expired). Run `npm run login` again.",
-          },
-        ],
-      };
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      return {
-        ...base,
-        isError: true,
-        status: "error",
-        unit_type: "video",
-        errors: [
-          {
-            where: "save_learn",
-            message: `saveMocContentLearn HTTP ${response.statusCode}`,
-          },
-        ],
-      };
-    }
-    saveBody = response.body;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+  const saved = await saveLearnDto({
+    http: ports.http,
+    cookie: session.cookie,
+    csrfKey: session.csrfKey,
+    referer,
+    dto,
+  });
+  if (saved.kind !== "saved") {
+    const where =
+      saved.kind === "error"
+        ? saved.where
+        : saved.kind === "auth_expired"
+          ? "credentials"
+          : "save_learn";
     return {
       ...base,
       isError: true,
-      status: "error",
+      status: saved.kind,
       unit_type: "video",
-      errors: [{ where: "save_learn", message: detail }],
-    };
-  }
-
-  const saveJson = parseJsonObject(saveBody);
-  if (saveJson == null) {
-    return {
-      ...base,
-      isError: true,
-      status: "page_structure_change",
-      unit_type: "video",
-      errors: [
-        {
-          where: "save_learn",
-          message:
-            "saveMocContentLearn returned non-JSON (page/API structure may have changed)",
-        },
-      ],
-    };
-  }
-  if (saveJson.code !== 0) {
-    return {
-      ...base,
-      isError: true,
-      status: "error",
-      unit_type: "video",
-      errors: [
-        {
-          where: "save_learn",
-          message: `saveMocContentLearn code=${String(saveJson.code)} ${asNonEmptyString(saveJson.message) ?? ""}`.trim(),
-        },
-      ],
+      errors: [{ where, message: saved.message }],
     };
   }
 
@@ -404,6 +397,8 @@ export async function studyUnit(
     duration_sec: durationSec,
     percent: 100,
     playback_rate: playbackRate,
+    page_count: null,
+    page_interval_sec: null,
     transport: "rpc",
     errors: [],
   };
@@ -425,6 +420,8 @@ function emptyResult(
     duration_sec: null,
     percent: null,
     playback_rate: playbackRate,
+    page_count: null,
+    page_interval_sec: null,
     transport: null,
   };
 }
@@ -462,8 +459,13 @@ async function fetchLessonUnitLearnVo(input: {
   csrfKey: string;
   contentId: string;
   unitId: string;
+  contentType: number;
   referer: string;
-}): Promise<{ durationSec: number | null; videoId: string | null } | null> {
+}): Promise<{
+  durationSec: number | null;
+  videoId: string | null;
+  textPages: number | null;
+} | null> {
   try {
     const response = await input.http.request({
       url: `${LEARN_VO_RPC_URL}?csrfKey=${encodeURIComponent(input.csrfKey)}`,
@@ -472,7 +474,7 @@ async function fetchLessonUnitLearnVo(input: {
       form: {
         contentId: input.contentId,
         unitId: input.unitId,
-        contentType: "1",
+        contentType: String(input.contentType),
       },
       headers: {
         origin: ORIGIN,
@@ -487,11 +489,206 @@ async function fetchLessonUnitLearnVo(input: {
       return null;
     }
     const result = asRecord(json.result) ?? json;
+    const textPages = firstPositivePageCount(result);
     return {
       durationSec: firstPositiveDuration(result),
       videoId: asId(result.videoId) ?? asId(result.contentId) ?? asId(result.id),
+      textPages,
     };
   } catch {
     return null;
   }
+}
+
+function firstPositivePageCount(record: Record<string, unknown>): number | null {
+  const raw = firstNumber(record.textPages, record.pageCount, record.pages);
+  if (raw == null || raw <= 0) {
+    return null;
+  }
+  return Math.floor(raw);
+}
+
+
+type SaveLearnOutcome =
+  | { kind: "saved" }
+  | { kind: "auth_expired"; message: string }
+  | { kind: "page_structure_change"; message: string }
+  | { kind: "error"; message: string; where: string };
+
+async function saveLearnDto(input: {
+  http: Icourse163Http;
+  cookie: string;
+  csrfKey: string;
+  referer: string;
+  dto: unknown;
+}): Promise<SaveLearnOutcome> {
+  let saveBody: string;
+  try {
+    const response = await input.http.request({
+      url: `${SAVE_LEARN_RPC_URL}?csrfKey=${encodeURIComponent(input.csrfKey)}`,
+      cookie: input.cookie,
+      method: "POST",
+      form: { dto: JSON.stringify(input.dto) },
+      headers: {
+        origin: ORIGIN,
+        referer: input.referer,
+      },
+    });
+    if (response.statusCode === 401 || response.statusCode === 403) {
+      return {
+        kind: "auth_expired",
+        message:
+          "icourse163 session is missing or expired (auth_expired). Run `npm run login` again.",
+      };
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return {
+        kind: "error",
+        where: "save_learn",
+        message: `saveMocContentLearn HTTP ${response.statusCode}`,
+      };
+    }
+    saveBody = response.body;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { kind: "error", where: "save_learn", message: detail };
+  }
+
+  const saveJson = parseJsonObject(saveBody);
+  if (saveJson == null) {
+    return {
+      kind: "page_structure_change",
+      message:
+        "saveMocContentLearn returned non-JSON (page/API structure may have changed)",
+    };
+  }
+  if (saveJson.code !== 0) {
+    return {
+      kind: "error",
+      where: "save_learn",
+      message: `saveMocContentLearn code=${String(saveJson.code)} ${asNonEmptyString(saveJson.message) ?? ""}`.trim(),
+    };
+  }
+  return { kind: "saved" };
+}
+
+async function studyDocUnit(input: {
+  base: Omit<StudyUnitResult, "isError" | "status" | "errors">;
+  courseId: string;
+  termId: string;
+  unitId: string;
+  located: LocatedUnit;
+  course: { course_id: string; term_id: string; school_short_name: string };
+  session: { cookie: string; csrfKey: string };
+  ports: Icourse163Ports;
+  playbackRate: number;
+  pageIntervalSec: number;
+}): Promise<StudyUnitResult> {
+  const {
+    base,
+    courseId,
+    termId,
+    unitId,
+    located,
+    course,
+    session,
+    ports,
+    playbackRate,
+    pageIntervalSec,
+  } = input;
+  const contentType = located.content_type ?? 3;
+  const referer = learnReferer(course);
+  const contentId = located.content_id ?? unitId;
+
+  const learnVo = await fetchLessonUnitLearnVo({
+    http: ports.http,
+    cookie: session.cookie,
+    csrfKey: session.csrfKey,
+    contentId,
+    unitId,
+    contentType,
+    referer,
+  });
+
+  // PDF (3): need textPages. Rich text (4): OCS reloads; mark finished with pageNum 1.
+  let pageCount = learnVo?.textPages ?? null;
+  if (pageCount == null && contentType === 4) {
+    pageCount = 1;
+  }
+  if (pageCount == null || pageCount <= 0) {
+    return {
+      ...base,
+      isError: true,
+      status: "page_structure_change",
+      unit_type: "doc",
+      page_interval_sec: pageIntervalSec,
+      errors: [
+        {
+          where: "learn_vo",
+          message:
+            "Could not resolve doc textPages (page/API structure may have changed)",
+        },
+      ],
+    };
+  }
+
+  if (pageIntervalSec > 0 && pageCount > 1) {
+    const turns = pageCount - 1;
+    await sleepMs(turns * pageIntervalSec * 1000);
+  }
+
+  const dto = buildDocLearnDto({
+    unit_id: unitId,
+    content_type: contentType,
+    page_count: pageCount,
+  });
+
+  const saved = await saveLearnDto({
+    http: ports.http,
+    cookie: session.cookie,
+    csrfKey: session.csrfKey,
+    referer,
+    dto,
+  });
+  if (saved.kind !== "saved") {
+    const where =
+      saved.kind === "error"
+        ? saved.where
+        : saved.kind === "auth_expired"
+          ? "credentials"
+          : "save_learn";
+    return {
+      ...base,
+      isError: true,
+      status: saved.kind,
+      unit_type: "doc",
+      page_count: pageCount,
+      page_interval_sec: pageIntervalSec,
+      errors: [{ where, message: saved.message }],
+    };
+  }
+
+  return {
+    isError: false,
+    status: "ok",
+    course_id: courseId,
+    term_id: termId,
+    unit_id: unitId,
+    unit_type: "doc",
+    completed: true,
+    learned_sec: null,
+    duration_sec: null,
+    percent: 100,
+    playback_rate: playbackRate,
+    page_count: pageCount,
+    page_interval_sec: pageIntervalSec,
+    transport: "rpc",
+    errors: [],
+  };
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

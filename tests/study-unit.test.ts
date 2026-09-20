@@ -6,7 +6,9 @@ import { learnReferer } from "../src/course-rpc";
 import {
   LEARN_VO_RPC_URL,
   SAVE_LEARN_RPC_URL,
+  buildDocLearnDto,
   buildVideoLearnDto,
+  clampPageIntervalSec,
   findUnitInMocTerm,
   studyUnit,
 } from "../src/study-unit";
@@ -129,6 +131,31 @@ describe("buildVideoLearnDto", () => {
   });
 });
 
+
+describe("buildDocLearnDto", () => {
+  test("builds finished doc dto for saveMocContentLearn", () => {
+    const dto = buildDocLearnDto({
+      unit_id: "402",
+      content_type: 3,
+      page_count: 9,
+    });
+    assert.equal(dto.unitId, 402);
+    assert.equal(dto.contentType, 3);
+    assert.equal(dto.finished, true);
+    assert.equal(dto.pageNum, 9);
+  });
+});
+
+describe("clampPageIntervalSec", () => {
+  test("defaults to 1 and clamps to 0–10", () => {
+    assert.equal(clampPageIntervalSec(undefined), 1);
+    assert.equal(clampPageIntervalSec(0), 0);
+    assert.equal(clampPageIntervalSec(3), 3);
+    assert.equal(clampPageIntervalSec(-1), 0);
+    assert.equal(clampPageIntervalSec(99), 10);
+  });
+});
+
 describe("studyUnit", () => {
   test("null credentials is auth_expired", async () => {
     const { calls, http } = recordingHttp(() => {
@@ -159,7 +186,7 @@ describe("studyUnit", () => {
     assert.equal(result.isError, true);
   });
 
-  test("non-video unit is non_media_unit", async () => {
+  test("quiz/other unit is non_media_unit", async () => {
     const { http } = recordingHttp((input) => {
       const warmed = warmupOk(input);
       if (warmed != null) {
@@ -174,15 +201,124 @@ describe("studyUnit", () => {
       {
         course_id: "1001",
         term_id: "2001",
-        unit_id: "402",
+        unit_id: "404",
         school_short_name: "SJTU",
       },
       portsWith(async () => SESSION, http),
     );
     assert.equal(result.status, "non_media_unit");
     assert.equal(result.isError, true);
-    assert.equal(result.unit_type, "doc");
+    assert.equal(result.unit_type, "quiz");
     assert.equal(result.completed, false);
+  });
+
+  test("doc PDF unit posts saveMocContentLearn and returns progress", async () => {
+    const { calls, http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        assert.equal(input.form?.contentType, "3");
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            code: 0,
+            result: { textPages: 9, textOrigUrl: "https://example.invalid/doc.pdf" },
+          }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        return { statusCode: 200, body: JSON.stringify({ code: 0, result: {} }) };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "402",
+        school_short_name: "SJTU",
+        page_interval_sec: 0,
+      },
+      portsWith(async () => SESSION, http),
+    );
+
+    assert.equal(result.status, "ok");
+    assert.equal(result.isError, false);
+    assert.equal(result.completed, true);
+    assert.equal(result.unit_id, "402");
+    assert.equal(result.unit_type, "doc");
+    assert.equal(result.page_count, 9);
+    assert.equal(result.page_interval_sec, 0);
+    assert.equal(result.percent, 100);
+    assert.equal(result.transport, "rpc");
+    assert.equal(result.learned_sec, null);
+    assert.equal(result.duration_sec, null);
+    assert.equal(JSON.stringify(result).includes("test-session"), false);
+
+    const saveCall = calls.find((call) => call.url.startsWith(SAVE_LEARN_RPC_URL));
+    assert.ok(saveCall != null);
+    assert.equal(saveCall.method, "POST");
+    assert.ok(saveCall.form?.dto != null);
+    const dto = JSON.parse(saveCall.form.dto) as {
+      unitId: number;
+      contentType: number;
+      finished: boolean;
+      pageNum: number;
+    };
+    assert.equal(dto.unitId, 402);
+    assert.equal(dto.contentType, 3);
+    assert.equal(dto.finished, true);
+    assert.equal(dto.pageNum, 9);
+  });
+
+  test("rich-text doc unit completes with pageNum 1", async () => {
+    const { calls, http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed != null) {
+        return warmed;
+      }
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(CATALOG_WITH_VIDEO_META) };
+      }
+      if (input.url.startsWith(LEARN_VO_RPC_URL)) {
+        assert.equal(input.form?.contentType, "4");
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ code: 0, result: { textPages: 0 } }),
+        };
+      }
+      if (input.url.startsWith(SAVE_LEARN_RPC_URL)) {
+        return { statusCode: 200, body: JSON.stringify({ code: 0, result: {} }) };
+      }
+      throw new Error(`unexpected url ${input.url}`);
+    });
+
+    const result = await studyUnit(
+      {
+        course_id: "1001",
+        term_id: "2001",
+        unit_id: "403",
+        school_short_name: "SJTU",
+        page_interval_sec: 0,
+      },
+      portsWith(async () => SESSION, http),
+    );
+
+    assert.equal(result.status, "ok");
+    assert.equal(result.unit_type, "doc");
+    assert.equal(result.completed, true);
+    assert.equal(result.page_count, 1);
+    const saveCall = calls.find((call) => call.url.startsWith(SAVE_LEARN_RPC_URL));
+    assert.ok(saveCall != null);
+    const dto = JSON.parse(saveCall.form!.dto!) as { contentType: number; pageNum: number };
+    assert.equal(dto.contentType, 4);
+    assert.equal(dto.pageNum, 1);
   });
 
   test("unknown unit is page_structure_change", async () => {

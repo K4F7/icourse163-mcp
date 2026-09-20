@@ -4,7 +4,7 @@
 
 ## 决策
 
-`study_unit` 优先使用官方学习进度 RPC（`courseBean.getLessonUnitLearnVo` + `courseBean.saveMocContentLearn`），与现有 `list_*` 工具同一 cookie/csrfKey/Referer 模式。不在本 issue 引入 Playwright 看课。
+`study_unit` 优先使用官方学习进度 RPC（`courseBean.getLessonUnitLearnVo` + `courseBean.saveMocContentLearn`），覆盖视频与文档/PPT（contentType 3/4，DTO 带 `pageNum`），与现有 `list_*` 工具同一 cookie/csrfKey/Referer 模式。不在本 issue 引入 Playwright 看课。
 
 ## 理由
 
