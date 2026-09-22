@@ -42,3 +42,7 @@ HTTP 端口增加可选 `json` body（与既有 `form` 互斥），因试卷提�
 | `exam` | `exams[]` | `contentId` 或 `test.id` |
 
 直接用 catalog id 作 tid 会得到 `code:0` 且 `result: null`（「试卷 result 为空」）。
+
+## 草稿预览限制（#32）
+
+部分 type=6 测验对 `submitAnswers(preview:true)` 返回「预览不能提交！」——无草稿态；`save_homework_answers` 应明确报错并引导显式 `submit_homework`，不得静默正式提交。mocTermDto 失败时禁止用目录 unit id 冒充试卷 tid。

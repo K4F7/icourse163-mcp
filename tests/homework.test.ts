@@ -7,8 +7,10 @@ import {
   QUIZ_PAPER_RPC_URL,
   SUBMIT_ANSWERS_RPC_URL,
   getHomework,
+  isPreviewSubmitRejectedMessage,
   parsePaperQuestions,
   parseTodoId,
+  previewRejectedUserMessage,
   resolvePaperTarget,
   saveHomeworkAnswers,
   stripHtml,
@@ -603,5 +605,162 @@ describe("getHomework paper tid resolution", () => {
     assert.equal(result.isError, true);
     assert.equal(result.status, "not_found");
     assert.match(result.errors[0]?.message ?? "", /未在学期目录中找到|contentId|试卷/);
+  });
+});
+
+describe("issue #32 unit-id fallback and preview reject", () => {
+  test("rejects using unit catalog id as tid when mocTermDto unavailable", async () => {
+    const { calls, http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed) return warmed;
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ code: -1, message: "系统异常", result: null }),
+        };
+      }
+      throw new Error(`paper must not run with catalog tid: ${input.url}`);
+    });
+    const result = await getHomework(
+      { todo_id: TODO_UNIT },
+      portsWith(async () => SESSION, http),
+    );
+    assert.equal(result.isError, true);
+    assert.equal(result.status, "incomplete");
+    assert.match(result.errors[0]?.message ?? "", /禁止用目录 id|contentId|mocTermDto/);
+    assert.equal(
+      calls.some((c) => c.url.startsWith(QUIZ_PAPER_RPC_URL)),
+      false,
+    );
+  });
+
+  test("empty paper result hints tid may not be contentId", async () => {
+    const { http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed) return warmed;
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(PAPER_RESOLVE_MOC) };
+      }
+      if (input.url.startsWith(QUIZ_PAPER_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ code: 0, result: null }),
+        };
+      }
+      throw new Error(`unexpected ${input.url}`);
+    });
+    const result = await getHomework(
+      { todo_id: TODO_UNIT },
+      portsWith(async () => SESSION, http),
+    );
+    assert.equal(result.isError, true);
+    assert.equal(result.status, "not_found");
+    assert.match(result.errors[0]?.message ?? "", /result 为空/);
+    assert.match(result.errors[0]?.message ?? "", /contentId|tid/);
+  });
+
+  test("maps preview-cannot-submit to clear draft-unsupported error", async () => {
+    assert.equal(isPreviewSubmitRejectedMessage("预览不能提交！"), true);
+    assert.match(previewRejectedUserMessage(), /本试卷不支持草稿预览保存/);
+    assert.match(previewRejectedUserMessage(), /submit_homework/);
+
+    let submitCalls = 0;
+    const { calls, http } = recordingHttp((input) => {
+      const warmed = warmupOk(input);
+      if (warmed) return warmed;
+      if (input.url.startsWith(TERM_RPC_URL)) {
+        return { statusCode: 200, body: mocTermBody(PAPER_RESOLVE_MOC) };
+      }
+      if (input.url.startsWith(QUIZ_PAPER_RPC_URL)) {
+        return {
+          statusCode: 200,
+          body: paperBody({
+            aid: 1,
+            tid: 9401,
+            type: 6,
+            tname: "type6 quiz",
+            objectiveQList: [
+              {
+                id: 11,
+                type: 1,
+                title: "题",
+                optionDtos: [
+                  { id: 101, content: "A" },
+                  { id: 102, content: "B" },
+                ],
+              },
+            ],
+            subjectiveQList: [],
+          }),
+        };
+      }
+      if (input.url.startsWith(SUBMIT_ANSWERS_RPC_URL)) {
+        submitCalls += 1;
+        const body = input.json as { preview?: unknown };
+        assert.equal(body.preview, true);
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ code: -1, message: "预览不能提交！" }),
+        };
+      }
+      throw new Error(`unexpected ${input.url}`);
+    });
+    const result = await saveHomeworkAnswers(
+      {
+        todo_id: TODO_UNIT,
+        answers: [{ question_id: "11", option_ids: ["102"] }],
+      },
+      portsWith(async () => SESSION, http),
+    );
+    assert.equal(result.isError, true);
+    assert.equal(result.status, "rejected");
+    assert.equal(result.preview, true);
+    assert.equal(result.submitted, false);
+    assert.match(result.errors[0]?.message ?? "", /本试卷不支持草稿预览保存/);
+    assert.match(result.errors[0]?.message ?? "", /submit_homework/);
+    assert.equal(submitCalls, 1);
+    // Must not have retried with preview:false
+    const submitPayloads = calls
+      .filter((c) => c.url.startsWith(SUBMIT_ANSWERS_RPC_URL))
+      .map((c) => (c.json as { preview: boolean }).preview);
+    assert.deepEqual(submitPayloads, [true]);
+  });
+
+  test("unit without contentId is unsupported, not unit-id tid", () => {
+    const moc = {
+      chapters: [
+        {
+          lessons: [
+            {
+              units: [
+                {
+                  id: 1321887787,
+                  name: "Java unit quiz",
+                  contentType: 5,
+                  // no contentId / test.id
+                },
+              ],
+            },
+          ],
+          quizs: [],
+          homeworks: [],
+        },
+      ],
+      exams: [],
+    };
+    const target = resolvePaperTarget(
+      {
+        course_id: "1206455818",
+        term_id: "1487801457",
+        source: "unit",
+        content_id: "1321887787",
+      },
+      moc,
+    );
+    assert.equal(target.ok, false);
+    if (!target.ok) {
+      assert.equal(target.status, "unsupported");
+      assert.match(target.errors[0]?.message ?? "", /缺少 contentId/);
+    }
   });
 });

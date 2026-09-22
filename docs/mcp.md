@@ -176,8 +176,8 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 - 入参：`todo_id`（来自 `list_todos`，格式 `course_id:term_id:quiz|unit|homework|exam:content_id`）；可选 `paper_type`（`quiz`|`homework`；默认按来源推断，`homework`→作业卷，其余→测验卷）；可选 `school_short_name`。
 - **读卷范围**：章节测验（`chapters.quizs`）、旧版单元测验（`contentType==5`）、章节作业（`chapters.homeworks`）、考试（可读题）。先经 `getLastLearnedMocTermDto` 把目录 id 解析为试卷 `tid`（`contentId` / `test.id`）；目录 id ≠ 试卷 tid。
 - 返回结构化题目：`stem_text`、选项 `options[]`、`type` / `type_label`、`supports_save`。`draft_only: true` 提醒后续必须草稿保存。
-- 清晰错误：`not_found`（目录无此 id）、`unsupported`（缺 contentId）、`auth_expired`。
-- RPC：`mocQuizRpcBean.getOpenQuizPaperDto` / `getOpenHomeworkPaperDto`（可 mock）。
+- 清晰错误：`not_found`（目录无此 id）、`unsupported`（缺 contentId）、`incomplete`（mocTermDto 不可用时**禁止**用目录 id 冒充 tid）、`auth_expired`；`code:0 result:null` 时提示 tid 可能未解析到试卷 contentId。
+- RPC：`mocQuizRpcBean.getOpenQuizPaperDto` / `getOpenHomeworkPaperDto`（可 mock）；遇并发限制短重试。
 - **流水线**：`get_homework`（读题）→ AI 填答 → **`save_homework_answers` 必调（草稿）** → 用户确认后才显式 `submit_homework`。默认不交。
 - 考试：可读题；正式提交见 `submit_homework`（拒绝 exam）。不要传账号或 cookie。
 
@@ -186,6 +186,7 @@ Grok Bot AddMcpServer 没有 cwd，必须用上面的绝对路径脚本或 `--pr
 - **草稿保存（必调）**。内部调用 `mocQuizRpcBean.submitAnswers` 且 **强制 `preview: true`**，`submitted` 恒为 `false`。
 - 入参：`todo_id`；`answers[{ question_id, option_ids?, text? }]`；可选 `paper_type` / `school_short_name`。
 - 拒绝任何夹带的 `submit: true` 或 `preview: false`（防止从 save 误交）。
+- 部分 type=6 测验平台会拒绝 preview（「预览不能提交！」）——此时返回明确错误「本试卷不支持草稿预览保存」，并引导显式 `submit_homework`；**从不**静默改成正式提交。
 - 正式提交必须另调 `submit_homework`，且仅在用户确认后。考试也可草稿保存，但不可正式代交。
 
 ## `submit_homework`

@@ -169,8 +169,8 @@ function paperFromRecord(
       asNonEmptyString(record.title) ??
       asNonEmptyString(test?.name) ??
       nameFallback,
-    content_id:
-      asId(record.contentId) ?? asId(test?.id) ?? asId(record.id),
+    // Never fall back to catalog record.id — that is not the paper tid.
+    content_id: asId(record.contentId) ?? asId(test?.id),
   };
 }
 
