@@ -256,26 +256,58 @@ export async function fetchAllCoursePanels(input: {
   return { ok: true, courses };
 }
 
+const MOC_CONCURRENCY_RETRY_ATTEMPTS = 3;
+const MOC_CONCURRENCY_RETRY_BASE_MS = 200;
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function rpcBodyMessage(body: string): string {
+  const json = parseJsonObject(body);
+  if (json == null) {
+    return "";
+  }
+  return asNonEmptyString(json.message) ?? asNonEmptyString(json.msg) ?? "";
+}
+
 export async function fetchMocTermDto(input: {
   http: Icourse163Http;
   cookie: string;
   csrfKey: string;
   course: { course_id: string; term_id: string; school_short_name: string };
 }): Promise<Record<string, unknown> | null> {
-  const response = await input.http.request({
-    url: `${TERM_RPC_URL}?csrfKey=${encodeURIComponent(input.csrfKey)}`,
-    cookie: input.cookie,
-    method: "POST",
-    form: { termId: input.course.term_id },
-    headers: {
-      origin: ORIGIN,
-      referer: learnReferer(input.course),
-    },
-  });
-  if (response.statusCode < 200 || response.statusCode >= 300) {
+  for (let attempt = 1; attempt <= MOC_CONCURRENCY_RETRY_ATTEMPTS; attempt += 1) {
+    const response = await input.http.request({
+      url: `${TERM_RPC_URL}?csrfKey=${encodeURIComponent(input.csrfKey)}`,
+      cookie: input.cookie,
+      method: "POST",
+      form: { termId: input.course.term_id },
+      headers: {
+        origin: ORIGIN,
+        referer: learnReferer(input.course),
+      },
+    });
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      const moc = parseMocTermDto(response.body);
+      if (moc != null) {
+        return moc;
+      }
+      const msg = rpcBodyMessage(response.body);
+      if (/并发限制/.test(msg) && attempt < MOC_CONCURRENCY_RETRY_ATTEMPTS) {
+        await sleepMs(MOC_CONCURRENCY_RETRY_BASE_MS * attempt);
+        continue;
+      }
+      return null;
+    }
+    const msg = rpcBodyMessage(response.body);
+    if (/并发限制/.test(msg) && attempt < MOC_CONCURRENCY_RETRY_ATTEMPTS) {
+      await sleepMs(MOC_CONCURRENCY_RETRY_BASE_MS * attempt);
+      continue;
+    }
     return null;
   }
-  return parseMocTermDto(response.body);
+  return null;
 }
 
 function isAuthFailureResponse(response: Icourse163HttpResponse): boolean {

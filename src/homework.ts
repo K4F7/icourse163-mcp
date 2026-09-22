@@ -51,7 +51,7 @@ export {
   resolvePaperType,
 } from "./paper-resolve";
 import type { PaperType, ParsedTodoId, PaperTargetOk } from "./paper-resolve";
-import { resolvePaperTarget, resolvePaperType } from "./paper-resolve";
+import { resolvePaperTarget } from "./paper-resolve";
 
 export type HomeworkOption = {
   id: string;
@@ -724,6 +724,27 @@ async function persistAnswers(
 
   const json = parseJsonObject(response.body);
   if (json == null || json.code !== 0) {
+    const rpcMsg =
+      asNonEmptyString(json?.message) ??
+      asNonEmptyString(json?.msg) ??
+      "submitAnswers RPC 返回非 0";
+    // preview save only: never silently convert to formal submit.
+    if (mode.preview && isPreviewSubmitRejectedMessage(rpcMsg)) {
+      return {
+        isError: true,
+        status: "rejected",
+        todo_id: todoId,
+        preview: true,
+        submitted: false,
+        results,
+        errors: [
+          {
+            where: "submitAnswers",
+            message: previewRejectedUserMessage(),
+          },
+        ],
+      };
+    }
     return {
       isError: true,
       status: "incomplete",
@@ -731,15 +752,7 @@ async function persistAnswers(
       preview: mode.preview,
       submitted: false,
       results,
-      errors: [
-        {
-          where: "submitAnswers",
-          message:
-            asNonEmptyString(json?.message) ??
-            asNonEmptyString(json?.msg) ??
-            "submitAnswers RPC 返回非 0",
-        },
-      ],
+      errors: [{ where: "submitAnswers", message: rpcMsg }],
     };
   }
 
@@ -770,6 +783,28 @@ function emptyGet(todoId: string): GetHomeworkResult {
   };
 }
 
+/** Platform rejects submitAnswers with preview:true (common on some type=6 quizzes). */
+export function isPreviewSubmitRejectedMessage(message: string): boolean {
+  return /预览不能提交/.test(message);
+}
+
+export function previewRejectedUserMessage(): string {
+  return (
+    "本试卷不支持草稿预览保存。确认答案后请显式调用 submit_homework；" +
+    "save_homework_answers 不会自动改为正式提交。"
+  );
+}
+
+function isConcurrencyLimitMessage(message: string): boolean {
+  return /并发限制/.test(message);
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const CONCURRENCY_RETRY_ATTEMPTS = 3;
+const CONCURRENCY_RETRY_BASE_MS = 200;
 
 async function resolvePaperTargetFromTerm(input: {
   http: Icourse163Http;
@@ -803,13 +838,18 @@ async function resolvePaperTargetFromTerm(input: {
     };
   }
   if (moc == null) {
-    // Fall back: some older callers / mocks pass paper tid directly as content_id.
+    // Never use catalog unit/quiz/homework/exam id as paper tid — platform
+    // returns code:0 result:null (空试卷). Require mocTermDto contentId.
     return {
-      ok: true,
-      tid: input.parsed.content_id,
-      paper_type: resolvePaperType(input.parsed, input.paper_type),
-      catalog_id: input.parsed.content_id,
-      title: null,
+      ok: false,
+      status: "incomplete",
+      errors: [
+        {
+          where: "term",
+          message:
+            `无法解析试卷 contentId：学期目录（mocTermDto）不可用，禁止用目录 id=${input.parsed.content_id} 冒充 tid。请重试或检查登录/课程权限。`,
+        },
+      ],
     };
   }
   return resolvePaperTarget(input.parsed, moc, input.paper_type);
@@ -838,60 +878,37 @@ async function fetchPaperDto(input: {
       ? { tid: Number(input.tid), withStdAnswerAndAnalyse: false }
       : { tid: Number(input.tid) };
 
-  let response;
-  try {
-    response = await input.http.request({
-      url,
-      cookie: input.cookie,
-      method: "POST",
-      json: body,
-      headers: {
-        origin: ORIGIN,
-        referer: learnReferer(input.course),
-      },
-    });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return {
-      ok: false,
-      status: "error",
-      errors: [{ where: "paper", message: detail }],
-    };
-  }
-
-  if (response.statusCode === 401 || response.statusCode === 403) {
-    return {
-      ok: false,
-      status: "auth_expired",
-      errors: [
-        {
-          where: "credentials",
-          message:
-            "icourse163 session is missing or expired (auth_expired). Run `npm run login` again.",
+  let json: Record<string, unknown> | null = null;
+  for (let attempt = 1; attempt <= CONCURRENCY_RETRY_ATTEMPTS; attempt += 1) {
+    let response;
+    try {
+      response = await input.http.request({
+        url,
+        cookie: input.cookie,
+        method: "POST",
+        json: body,
+        headers: {
+          origin: ORIGIN,
+          referer: learnReferer(input.course),
         },
-      ],
-    };
-  }
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    return {
-      ok: false,
-      status: "error",
-      errors: [
-        { where: "paper", message: `Paper RPC HTTP ${response.statusCode}` },
-      ],
-    };
-  }
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (
+        isConcurrencyLimitMessage(detail) &&
+        attempt < CONCURRENCY_RETRY_ATTEMPTS
+      ) {
+        await sleepMs(CONCURRENCY_RETRY_BASE_MS * attempt);
+        continue;
+      }
+      return {
+        ok: false,
+        status: "error",
+        errors: [{ where: "paper", message: detail }],
+      };
+    }
 
-  const json = parseJsonObject(response.body);
-  if (json == null) {
-    return {
-      ok: false,
-      status: "incomplete",
-      errors: [{ where: "paper", message: "Paper RPC 返回非 JSON" }],
-    };
-  }
-  if (json.code !== 0) {
-    if (json.code === -1 || /登录|login|auth/i.test(String(json.message ?? ""))) {
+    if (response.statusCode === 401 || response.statusCode === 403) {
       return {
         ok: false,
         status: "auth_expired",
@@ -904,18 +921,62 @@ async function fetchPaperDto(input: {
         ],
       };
     }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return {
+        ok: false,
+        status: "error",
+        errors: [
+          { where: "paper", message: `Paper RPC HTTP ${response.statusCode}` },
+        ],
+      };
+    }
+
+    json = parseJsonObject(response.body);
+    if (json == null) {
+      return {
+        ok: false,
+        status: "incomplete",
+        errors: [{ where: "paper", message: "Paper RPC 返回非 JSON" }],
+      };
+    }
+    if (json.code !== 0) {
+      const rpcMsg =
+        asNonEmptyString(json.message) ??
+        asNonEmptyString(json.msg) ??
+        `Paper RPC code=${String(json.code)}`;
+      if (
+        isConcurrencyLimitMessage(rpcMsg) &&
+        attempt < CONCURRENCY_RETRY_ATTEMPTS
+      ) {
+        await sleepMs(CONCURRENCY_RETRY_BASE_MS * attempt);
+        continue;
+      }
+      if (json.code === -1 || /登录|login|auth/i.test(String(json.message ?? ""))) {
+        return {
+          ok: false,
+          status: "auth_expired",
+          errors: [
+            {
+              where: "credentials",
+              message:
+                "icourse163 session is missing or expired (auth_expired). Run `npm run login` again.",
+            },
+          ],
+        };
+      }
+      return {
+        ok: false,
+        status: "not_found",
+        errors: [{ where: "paper", message: rpcMsg }],
+      };
+    }
+    break;
+  }
+  if (json == null || json.code !== 0) {
     return {
       ok: false,
-      status: "not_found",
-      errors: [
-        {
-          where: "paper",
-          message:
-            asNonEmptyString(json.message) ??
-            asNonEmptyString(json.msg) ??
-            `Paper RPC code=${String(json.code)}`,
-        },
-      ],
+      status: "incomplete",
+      errors: [{ where: "paper", message: "Paper RPC 重试后仍失败" }],
     };
   }
 
@@ -924,7 +985,13 @@ async function fetchPaperDto(input: {
     return {
       ok: false,
       status: "not_found",
-      errors: [{ where: "paper", message: "试卷 result 为空" }],
+      errors: [
+        {
+          where: "paper",
+          message:
+            `试卷 result 为空（tid=${input.tid}）。可能 tid 尚未解析为试卷 contentId（目录 unit/quiz id 不能直接当 tid）。`,
+        },
+      ],
     };
   }
   return { ok: true, paper };
